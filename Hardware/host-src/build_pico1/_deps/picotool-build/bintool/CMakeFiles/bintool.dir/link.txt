@@ -1,0 +1,2 @@
+C:\PROGRA~1\CODEBL~1\MinGW\bin\ar.exe qc libbintool.a CMakeFiles/bintool.dir/bintool.cpp.obj CMakeFiles/bintool.dir/mbedtls_wrapper.c.obj
+C:\PROGRA~1\CODEBL~1\MinGW\bin\ranlib.exe libbintool.a

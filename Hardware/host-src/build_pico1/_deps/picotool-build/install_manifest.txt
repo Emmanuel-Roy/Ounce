@@ -1,0 +1,7 @@
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/picotool.exe
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/picotoolTargets.cmake
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/picotoolTargets-release.cmake
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/picotoolConfig.cmake
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/picotoolConfigVersion.cmake
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/enc_bootloader.elf
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool/enc_bootloader_mbedtls.elf

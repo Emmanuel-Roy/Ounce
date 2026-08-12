@@ -1,0 +1,12 @@
+# Build Directories
+build/
+**/build/
+.bin/
+
+# Temporary / OS / Python files
+__pycache__/
+*.pyc
+.VSCode/
+.idea/
+*.user
+*.suo

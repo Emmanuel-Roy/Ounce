@@ -1,0 +1,2 @@
+C:\PROGRA~1\CODEBL~1\MinGW\bin\ar.exe qc libelf2uf2.a CMakeFiles/elf2uf2.dir/elf2uf2.cpp.obj
+C:\PROGRA~1\CODEBL~1\MinGW\bin\ranlib.exe libelf2uf2.a

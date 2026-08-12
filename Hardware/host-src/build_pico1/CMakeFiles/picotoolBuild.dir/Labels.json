@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/CMakeFiles/picotoolBuild"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/CMakeFiles/picotoolBuild.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/CMakeFiles/picotoolBuild-complete.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-build.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-configure.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-download.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-install.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-mkdir.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-patch.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-test.rule"
+		},
+		{
+			"file" : "Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/picotool/src/picotoolBuild-stamp/picotoolBuild-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"picotoolBuild"
+		],
+		"name" : "picotoolBuild"
+	}
+}

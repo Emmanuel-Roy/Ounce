@@ -1,0 +1,1 @@
+cmd='C:/Program Files/CMake/bin/cmake.exe;-DCMAKE_MAKE_PROGRAM:FILEPATH=C:/MinGW/bin/mingw32-make.exe;-DPICO_SDK_PATH:FILEPATH=Z:/Code/Github/Ounce/Hardware/pico-sdk;-DUSE_PRECOMPILED:BOOL=true;-DUSE_MBEDTLS=1;-DPICO_DEBUG_INFO_IN_RELEASE=OFF;-GMinGW Makefiles;-S;<SOURCE_DIR><SOURCE_SUBDIR>;-B;<BINARY_DIR>'

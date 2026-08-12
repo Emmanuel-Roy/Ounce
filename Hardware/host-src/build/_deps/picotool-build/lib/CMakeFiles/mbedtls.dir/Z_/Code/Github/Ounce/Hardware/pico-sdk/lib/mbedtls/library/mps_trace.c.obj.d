@@ -1,0 +1,30 @@
+lib/CMakeFiles/mbedtls.dir/Z_/Code/Github/Ounce/Hardware/pico-sdk/lib/mbedtls/library/mps_trace.c.obj: \
+ Z:\Code\Github\Ounce\Hardware\pico-sdk\lib\mbedtls\library\mps_trace.c \
+ Z:\Code\Github\Ounce\Hardware\pico-sdk\lib\mbedtls\library\common.h \
+ Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/mbedtls/include/mbedtls/build_info.h \
+ Z:/Code/Github/Ounce/Hardware/host-src/build/_deps/picotool-src/lib/include/picotool_mbedtls_config.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/lib/gcc/x86_64-w64-mingw32/8.1.0/include-fixed/limits.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/lib/gcc/x86_64-w64-mingw32/8.1.0/include-fixed/syslimits.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/limits.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/crtdefs.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/_mingw.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/_mingw_mac.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/_mingw_secapi.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/vadefs.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/sdks/_mingw_directx.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/sdks/_mingw_ddk.h \
+ Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/mbedtls/include/mbedtls/config_adjust_legacy_crypto.h \
+ Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/mbedtls/include/mbedtls/config_adjust_x509.h \
+ Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/mbedtls/include/mbedtls/config_adjust_ssl.h \
+ Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/mbedtls/include/mbedtls/check_config.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/lib/gcc/x86_64-w64-mingw32/8.1.0/include/stdint.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/stdint.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/lib/gcc/x86_64-w64-mingw32/8.1.0/include/stddef.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/stddef.h \
+ Z:\Code\Github\Ounce\Hardware\pico-sdk\lib\mbedtls\library\alignment.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/string.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/sec_api/string_s.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/stdlib.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/sec_api/stdlib_s.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/malloc.h \
+ C:/PROGRA~1/CODEBL~1/MinGW/x86_64-w64-mingw32/include/assert.h

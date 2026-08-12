@@ -1,0 +1,3 @@
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool-subbuild/CMakeFiles/picotool-populate.dir
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool-subbuild/CMakeFiles/edit_cache.dir
+Z:/Code/Github/Ounce/Hardware/host-src/build_pico1/_deps/picotool-subbuild/CMakeFiles/rebuild_cache.dir

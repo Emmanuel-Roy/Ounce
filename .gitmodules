@@ -1,0 +1,8 @@
+[submodule "Hardware/servant-src/GP2040-CE-SPI"]
+	path = Hardware/servant-src/GP2040-CE-SPI
+	url = git@github.com:Emmanuel-Roy/GP2040-CE-SPI.git
+	branch = main
+[submodule "Hardware/Ounce-PCB/ki-lime-pi-to-go"]
+	path = Hardware/Ounce-PCB/ki-lime-pi-to-go
+	url = https://github.com/recursivenomad/ki-lime-pi-to-go.git
+	branch = v1.1.0
