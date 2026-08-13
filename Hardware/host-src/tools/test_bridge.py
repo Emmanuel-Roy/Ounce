@@ -152,6 +152,7 @@ def main():
                 # Closing and reopening the same Serial object gets the
                 # actual thing we want (a fresh handle/connection) in low
                 # single-digit milliseconds, with no process exit at all.
+                print("[+] Disconnecting serial...")
                 try:
                     ser.close()
                 except Exception:
@@ -162,6 +163,7 @@ def main():
                         break
                     except Exception:
                         time.sleep(0.01)
+                print("[+] Reconnected serial.")
                 start_time = time.monotonic()
 
             if args.max_packets > 0 and total_sent >= args.max_packets:
