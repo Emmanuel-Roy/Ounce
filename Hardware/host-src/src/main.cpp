@@ -3,7 +3,7 @@
 #include "pico/stdlib.h"
 #include "spi_master.h"
 
-#define MAX_CONSECUTIVE_UNACK 10
+#define MAX_CONSECUTIVE_UNACK 1000
 
 int main() {
     stdio_init_all();
