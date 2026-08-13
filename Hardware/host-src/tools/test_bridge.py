@@ -130,7 +130,6 @@ def main():
     print("[+] SILENT GAMEPLAY MODE ACTIVE.\n")
 
     total_sent = 0
-    total_acked = 0
 
     try:
         while True:
@@ -188,12 +187,13 @@ def main():
             except Exception:
                 time.sleep(0.01)
 
-            # 4. Drain CDC telemetry silently
+            # 4. Drain CDC telemetry and show it
             try:
                 while ser.in_waiting > 0:
                     line = ser.readline().decode('utf-8', errors='ignore').strip()
-                    if line and ("<< ACK: Target" in line or "Loopback OK" in line):
-                        total_acked += 1
+                    if not line:
+                        continue
+                    print(line)
             except Exception:
                 pass
 
@@ -208,7 +208,6 @@ def main():
             ser.close()
         except Exception:
             pass
-        print(f"[+] Summary: Transmitted {total_sent} packets | Received {total_acked} ACKs.")
 
 if __name__ == '__main__':
     main()

@@ -3878,6 +3878,7 @@ CMakeFiles/ounce_master.dir/src/main.cpp.obj: Z:/Code/Github/Ounce/Hardware/host
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/c++/13.3.1/cstddef \
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/c++/13.3.1/cstdint \
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/c++/13.3.1/pstl/pstl_config.h \
+  C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/inttypes.h \
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/machine/_default_types.h \
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/machine/_types.h \
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/machine/ieeefp.h \
@@ -3907,12 +3908,30 @@ CMakeFiles/ounce_master.dir/src/main.cpp.obj: Z:/Code/Github/Ounce/Hardware/host
   generated/pico_base/pico/version.h \
   Z:/Code/Github/Ounce/Hardware/host-src/include/packet.h \
   Z:/Code/Github/Ounce/Hardware/host-src/include/spi_master.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/class/cdc/cdc.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/class/cdc/cdc_device.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_common.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_compiler.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_debug.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_fifo.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_mcu.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_types.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/common/tusb_verify.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/device/usbd.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/osal/osal.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/osal/osal_pico.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/tusb.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/src/tusb_option.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_base_headers/include/pico.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_base_headers/include/pico/assert.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_base_headers/include/pico/config.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_base_headers/include/pico/error.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_base_headers/include/pico/types.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_stdlib_headers/include/pico/stdlib.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_sync/include/pico/critical_section.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_sync/include/pico/lock_core.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_sync/include/pico/mutex.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_sync/include/pico/sem.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/common/pico_time/include/pico/time.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2350/hardware_regs/include/hardware/platform_defs.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/accessctrl.h \
@@ -3948,6 +3967,8 @@ CMakeFiles/ounce_master.dir/src/main.cpp.obj: Z:/Code/Github/Ounce/Hardware/host
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_irq/include/hardware/irq.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_resets/include/hardware/resets.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_spi/include/hardware/spi.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_sync/include/hardware/sync.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_sync_spin_lock/include/hardware/sync/spin_lock.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_timer/include/hardware/timer.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/hardware_uart/include/hardware/uart.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_platform_common/include/pico/platform/common.h \
@@ -3955,7 +3976,8 @@ CMakeFiles/ounce_master.dir/src/main.cpp.obj: Z:/Code/Github/Ounce/Hardware/host
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_platform_panic/include/pico/platform/panic.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_platform_sections/include/pico/platform/sections.h \
   Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_stdio/include/pico/stdio.h \
-  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_stdio_usb/include/pico/stdio_usb.h
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_stdio_usb/include/pico/stdio_usb.h \
+  Z:/Code/Github/Ounce/Hardware/pico-sdk/src/rp2_common/pico_stdio_usb/include/tusb_config.h
 
 CMakeFiles/ounce_master.dir/src/spi_master.cpp.obj: Z:/Code/Github/Ounce/Hardware/host-src/src/spi_master.cpp \
   C:/Program\ Files\ (x86)/Arm\ GNU\ Toolchain\ arm-none-eabi/13.3\ rel1/arm-none-eabi/include/_ansi.h \

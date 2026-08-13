@@ -60,7 +60,6 @@ set(CMAKE_MAKEFILE_DEPENDS
   "Z:/Code/Github/Ounce/Hardware/pico-sdk/cmake/preload/toolchains/util/pico_gcc_common.cmake"
   "Z:/Code/Github/Ounce/Hardware/pico-sdk/cmake/preload/toolchains/util/set_flags.cmake"
   "Z:/Code/Github/Ounce/Hardware/pico-sdk/docs/CMakeLists.txt"
-  "Z:/Code/Github/Ounce/Hardware/pico-sdk/external/pico_sdk_import.cmake"
   "Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/hw/bsp/family_support.cmake"
   "Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/hw/bsp/rp2040/boards/pico_sdk/board.cmake"
   "Z:/Code/Github/Ounce/Hardware/pico-sdk/lib/tinyusb/hw/bsp/rp2040/family.cmake"

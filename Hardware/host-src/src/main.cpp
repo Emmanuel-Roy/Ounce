@@ -1,15 +1,49 @@
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "spi_master.h"
+#include "tusb.h"
 
 #define MAX_CONSECUTIVE_UNACK 1000
 
+uint16_t last_seen_count[4] = {0};
+uint32_t frozen_count_streak[4] = {0};
+absolute_time_t spi_pause_until = nil_time;
+
+// Diagnostic-print replacement for printf()+fflush(stdout). printf() routes
+// through pico_stdio's print_mutex and then stdio_usb's own stdio_usb_mutex,
+// either of which can stall this loop (see the tud_cdc_read() comment below
+// for why that mattered here). This writes directly to the TinyUSB CDC
+// endpoint instead: best-effort, never blocks, and just drops the line if
+// there isn't FIFO space for it rather than waiting.
+static void cdc_printf(const char *fmt, ...) {
+    if (!tud_cdc_connected()) return;
+
+    char buf[160];
+    va_list args;
+    va_start(args, fmt);
+    int len = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (len <= 0) return;
+    if (len > (int)sizeof(buf)) len = (int)sizeof(buf);
+
+    uint32_t avail = tud_cdc_write_available();
+    uint32_t n = (uint32_t)len;
+    if (n > avail) n = avail;
+    if (n > 0) {
+        tud_cdc_write(buf, n);
+        tud_cdc_write_flush();
+    }
+}
+
 int main() {
     stdio_init_all();
+	const uint HEARTBEAT_PIN = 25;          // on-board LED on most Pico 2 boards
+	gpio_init(HEARTBEAT_PIN);
+	gpio_set_dir(HEARTBEAT_PIN, GPIO_OUT);
     sleep_ms(500); // Allow USB CDC stack to connect to host PC
-    printf("=== OUNCE PRIMARY RP2350 MASTER RUNNING ===\n");
-    fflush(stdout);
+    cdc_printf("=== OUNCE PRIMARY RP2350 MASTER RUNNING ===\n");
 
     spi_master_init();
 
@@ -41,78 +75,129 @@ int main() {
     absolute_time_t next_frame = get_absolute_time();
 
     while (true) {
+        // Service TinyUSB ourselves, once per loop, as the ONLY caller.
+        // PICO_STDIO_USB_ENABLE_IRQ_BACKGROUND_TASK is disabled (see
+        // CMakeLists.txt) specifically so nothing else ever calls tud_task()
+        // from an IRQ. Both tud_task() and the tud_cdc_*() calls below claim
+        // TinyUSB's internal _usbd_mutex (a blocking mutex); mixing an IRQ
+        // context with mainline on that mutex is a real deadlock hazard (the
+        // SDK's own mutex.h warns against blocking mutex calls from an IRQ
+        // handler) and was the actual cause of this firmware's intermittent
+        // full hangs. Single-context polling removes the race entirely.
+        tud_task();
+
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
         if (serial_idx > 0 && (now - last_byte_time > 20)) {
             serial_idx = 0;
         }
 
-        int c = getchar_timeout_us(0);
-        while (c != PICO_ERROR_TIMEOUT) {
-            uint8_t byte = static_cast<uint8_t>(c);
-            last_byte_time = now;
+        // Read host input straight from the TinyUSB CDC FIFO (see comment
+        // above - this and cdc_printf() are the only other tud_cdc_*() call
+        // sites, and they're safe now that tud_task() only ever runs here
+        // too).
+        uint32_t rx_avail = tud_cdc_available();
+        if (rx_avail) {
+            uint8_t rx_chunk[64];
+            if (rx_avail > sizeof(rx_chunk)) rx_avail = sizeof(rx_chunk);
+            uint32_t rx_count = tud_cdc_read(rx_chunk, rx_avail);
+            for (uint32_t k = 0; k < rx_count; k++) {
+                uint8_t byte = rx_chunk[k];
+                last_byte_time = now;
 
-            if (serial_idx == 0) {
-                if (byte == 0x5A) {
-                    serial_buf[0] = byte;
-                    serial_idx = 1;
-                }
-            } else {
-                serial_buf[serial_idx++] = byte;
-                if (serial_idx == 8) {
-                    uint8_t target_id = serial_buf[1];
-                    if (target_id < 4) {
-                        uint8_t expected_crc = calculate_crc8(serial_buf, 7);
-                        if (serial_buf[7] == expected_crc) {
-                            packets[target_id].target_id = target_id;
-                            memcpy(&packets[target_id].buttons, &serial_buf[2], 2);
-                            packets[target_id].lx = serial_buf[4];
-                            packets[target_id].ly = serial_buf[5];
-                            packets[target_id].rx = serial_buf[6];
-                            last_serial_rx_time[target_id] = now;
-                        }
+                if (serial_idx == 0) {
+                    if (byte == 0x5A) {
+                        serial_buf[0] = byte;
+                        serial_idx = 1;
                     }
-                    serial_idx = 0;
-                }
-            }
-            c = getchar_timeout_us(0);
-        }
-
-        for (int i = 0; i < 4; i++) {
-            if (last_serial_rx_time[i] == 0 || (now - last_serial_rx_time[i] > 200)) {
-                reset_packet(packets[i], static_cast<uint8_t>(i));
-            }
-        }
-
-        for (int i = 0; i < 1; i++) {
-            packets[i].crc8 = calculate_crc8(reinterpret_cast<const uint8_t*>(&packets[i]), 7);
-            ack_status[i] = spi_master_transceive_packet(i, packets[i], ack_packets[i]);
-            if (ack_status[i]) {
-                consecutive_unack_count[i] = 0;
-            } else {
-                consecutive_unack_count[i]++;
-                if (consecutive_unack_count[i] >= MAX_CONSECUTIVE_UNACK) {
-                    consecutive_unack_count[i] = 0;
-                    spi_master_init();
-                }
-            }
-        }
-
-        loop_count++;
-        if (loop_count % 30 == 0) {
-            for (int i = 0; i < 1; i++) {
-                if (ack_status[i]) {
-                    printf("  << ACK: Target %d | btns=0x%04X | LX=%d LY=%d | count=%u\n",
-                           i, packets[i].buttons, packets[i].lx, packets[i].ly, ack_packets[i].packet_count);
                 } else {
-                    printf("  << MISO DIAG: Target %d | Hdr: 0x%02X | ID: 0x%02X | Count: %u | CRC: 0x%02X\n",
-                           i, ack_packets[i].header, ack_packets[i].slave_id, ack_packets[i].packet_count, ack_packets[i].crc8);
+                    serial_buf[serial_idx++] = byte;
+                    if (serial_idx == 8) {
+                        uint8_t target_id = serial_buf[1];
+                        if (target_id < 4) {
+                            uint8_t expected_crc = calculate_crc8(serial_buf, 7);
+                            if (serial_buf[7] == expected_crc) {
+                                packets[target_id].target_id = target_id;
+                                memcpy(&packets[target_id].buttons, &serial_buf[2], 2);
+                                packets[target_id].lx = serial_buf[4];
+                                packets[target_id].ly = serial_buf[5];
+                                packets[target_id].rx = serial_buf[6];
+                                last_serial_rx_time[target_id] = now;
+                            }
+                        }
+                        serial_idx = 0;
+                    }
                 }
-                fflush(stdout);
             }
         }
+
+        // Neutralize stale serial targets
+		for (int i = 0; i < 4; i++) {
+			if (last_serial_rx_time[i] == 0 || (now - last_serial_rx_time[i] > 200)) {
+				reset_packet(packets[i], static_cast<uint8_t>(i));
+			}
+		}
+
+		// Pause SPI so Slave can hard-reset with an idle bus
+		if (!time_reached(spi_pause_until)) {
+			// bus idle
+		} else {
+			for (int i = 0; i < 1; i++) { // ONLY Target 0
+				packets[i].crc8 = calculate_crc8(reinterpret_cast<const uint8_t*>(&packets[i]), 7);
+				ack_status[i] = spi_master_transceive_packet(i, packets[i], ack_packets[i]);
+
+				if (ack_status[i]) {
+					consecutive_unack_count[i] = 0;
+
+					if (ack_packets[i].packet_count == last_seen_count[i]) {
+						frozen_count_streak[i]++;
+						if (frozen_count_streak[i] >= 20) {
+							cdc_printf(" << RECOVER: Target %d frozen count=%u - pausing SPI 100ms\n",
+								   i, ack_packets[i].packet_count);
+							gpio_put(20, 1);
+							spi_master_init();
+							spi_pause_until = make_timeout_time_ms(100);
+							frozen_count_streak[i] = 0;
+							last_seen_count[i] = 0xFFFF;
+						}
+					} else {
+						last_seen_count[i] = ack_packets[i].packet_count;
+						frozen_count_streak[i] = 0;
+					}
+				} else {
+					// No valid ACK at all – this is the path that was missing
+					consecutive_unack_count[i]++;
+					frozen_count_streak[i] = 0;
+					if (consecutive_unack_count[i] >= 30) {
+						cdc_printf(" << RECOVER: Target %d %u consecutive fails - pausing SPI 150ms\n",
+							   i, consecutive_unack_count[i]);
+						gpio_put(20, 1);
+						spi_master_init();
+						spi_pause_until = make_timeout_time_ms(150);
+						consecutive_unack_count[i] = 0;
+						last_seen_count[i] = 0xFFFF;
+					}
+				}
+			}
+		}
+
+		loop_count++;
+		if (loop_count % 30 == 0) {
+			for (int i = 0; i < 1; i++) {   // ONLY Target 0
+				if (ack_status[i]) {
+					cdc_printf(" << ACK: Target %d | btns=0x%04X | LX=%d LY=%d | count=%u\n",
+						   i, packets[i].buttons, packets[i].lx, packets[i].ly,
+						   ack_packets[i].packet_count);
+				} else {
+					cdc_printf(" << MISO DIAG: Target %d | Hdr: 0x%02X | ID: 0x%02X | Count: %u | CRC: 0x%02X\n",
+						   i, ack_packets[i].header, ack_packets[i].slave_id,
+						   ack_packets[i].packet_count, ack_packets[i].crc8);
+				}
+			}
+		}
 
         next_frame = delayed_by_us(next_frame, 1000);
+		gpio_put(HEARTBEAT_PIN, (loop_count >> 8) & 1);   // toggles ~every 256 ms
         sleep_until(next_frame);
     }
 

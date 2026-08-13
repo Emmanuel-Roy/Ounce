@@ -12,6 +12,12 @@ set(CMAKE_DEPENDS_CHECK_ASM
   )
 set(CMAKE_ASM_COMPILER_ID "GNU")
 
+# Preprocessor definitions for this target.
+set(CMAKE_TARGET_DEFINITIONS_ASM
+  "PICO_STDIO_USB_ENABLE_IRQ_BACKGROUND_TASK=0"
+  "PICO_STDIO_USB_STDOUT_TIMEOUT_US=0"
+  )
+
 # The include file search paths:
 set(CMAKE_ASM_TARGET_INCLUDE_PATH
   )
