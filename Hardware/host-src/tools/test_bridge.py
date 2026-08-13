@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import struct
@@ -95,6 +96,7 @@ def main():
     parser.add_argument("--port", type=str, default=None, help="Serial port of Primary RP2350 Master")
     parser.add_argument("--target", type=int, default=0, help="Target Slave ID (0..3)")
     parser.add_argument("--max-packets", type=int, default=0, help="Exit automatically after transmitting N packets (0 = run continuously)")
+    parser.add_argument("--relaunch-seconds", type=float, default=5.0, help="Fully close and re-exec the bridge (fresh serial connection) after this many seconds, as a safety net against a stuck link. 0 disables.")
     args = parser.parse_args()
 
     port_name = args.port or find_primary_port()
@@ -127,15 +129,28 @@ def main():
     print("  Z / X          : L3 / R3 Stick Clicks")
     print("  ESC            : Exit Bridge")
     print("------------------------------------------")
-    print("[+] SILENT GAMEPLAY MODE ACTIVE.\n")
+    print("[+] SILENT GAMEPLAY MODE ACTIVE.")
+    if args.relaunch_seconds > 0:
+        print(f"[+] Auto-relaunch enabled: fresh connection every {args.relaunch_seconds:.0f}s.\n")
+    else:
+        print("[+] Auto-relaunch disabled.\n")
 
     total_sent = 0
+    start_time = time.monotonic()
 
     try:
         while True:
             if is_key_down(VK_ESC):
                 print("\n[+] Exiting test bridge.")
                 break
+
+            if args.relaunch_seconds > 0 and (time.monotonic() - start_time) >= args.relaunch_seconds:
+                print(f"\n[+] Relaunching (fresh connection) after {args.relaunch_seconds:.0f}s...")
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                os.execv(sys.executable, [sys.executable] + sys.argv)
 
             if args.max_packets > 0 and total_sent >= args.max_packets:
                 print("\n[+] Reached maximum packet limit of %d. Exiting." % args.max_packets)
