@@ -144,25 +144,20 @@ def main():
                 break
 
             if args.relaunch_seconds > 0 and (time.monotonic() - start_time) >= args.relaunch_seconds:
-                # In-process reconnect instead of os.execv(): execv on Windows
-                # rebuilds the command line without reliably quoting paths
-                # that contain spaces (e.g. sys.executable under
-                # "...\Emmanuel Roy\..."), which was corrupting the relaunch,
-                # and swapping the process image also orphans the terminal.
-                # Closing and reopening the same Serial object gets the
-                # actual thing we want (a fresh handle/connection) in low
-                # single-digit milliseconds, with no process exit at all.
+                # Toggle DTR instead of closing/reopening the port: a full
+                # close+reopen goes through Windows' USB-CDC driver teardown
+                # and re-enumeration handshake, which can take 100-500ms and
+                # was the source of the visible stall. DTR toggling never
+                # closes the OS handle at all - it just pulses the control
+                # line - so it's sub-millisecond and still gets us the
+                # "cycle the connection" effect the relaunch is for.
                 print("[+] Disconnecting serial...")
                 try:
-                    ser.close()
+                    ser.dtr = False
+                    time.sleep(0.005)
+                    ser.dtr = True
                 except Exception:
                     pass
-                while True:
-                    try:
-                        ser = serial.Serial(port_name, 115200, timeout=0.05, write_timeout=0.05)
-                        break
-                    except Exception:
-                        time.sleep(0.01)
                 print("[+] Reconnected serial.")
                 start_time = time.monotonic()
 
