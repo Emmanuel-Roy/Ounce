@@ -1,4 +1,3 @@
-import os
 import sys
 import time
 import struct
@@ -145,12 +144,25 @@ def main():
                 break
 
             if args.relaunch_seconds > 0 and (time.monotonic() - start_time) >= args.relaunch_seconds:
-                print(f"\n[+] Relaunching (fresh connection) after {args.relaunch_seconds:.0f}s...")
+                # In-process reconnect instead of os.execv(): execv on Windows
+                # rebuilds the command line without reliably quoting paths
+                # that contain spaces (e.g. sys.executable under
+                # "...\Emmanuel Roy\..."), which was corrupting the relaunch,
+                # and swapping the process image also orphans the terminal.
+                # Closing and reopening the same Serial object gets the
+                # actual thing we want (a fresh handle/connection) in low
+                # single-digit milliseconds, with no process exit at all.
                 try:
                     ser.close()
                 except Exception:
                     pass
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                while True:
+                    try:
+                        ser = serial.Serial(port_name, 115200, timeout=0.05, write_timeout=0.05)
+                        break
+                    except Exception:
+                        time.sleep(0.01)
+                start_time = time.monotonic()
 
             if args.max_packets > 0 and total_sent >= args.max_packets:
                 print("\n[+] Reached maximum packet limit of %d. Exiting." % args.max_packets)
