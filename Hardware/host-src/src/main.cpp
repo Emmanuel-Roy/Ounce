@@ -74,6 +74,18 @@ int main() {
     uint32_t loop_count = 0;
     absolute_time_t next_frame = get_absolute_time();
 
+    // USB soft-clear: if the host goes quiet for a while, force a USB
+    // disconnect/reconnect so the OS notices the device vanished and
+    // re-enumerates it, clearing any stuck host-side driver state. This is
+    // the USB-side equivalent of the SPI0 hard-reset recovery below, and it
+    // runs independently of anything the host is doing (unlike the PC-side
+    // test_bridge.py relaunch, this needs no cooperation from the host at
+    // all). Scheduled via absolute_time_t rather than sleep_ms() so it never
+    // blocks the loop.
+    uint32_t last_usb_clear_ms = 0;
+    bool usb_reconnect_pending = false;
+    absolute_time_t usb_reconnect_at = nil_time;
+
     while (true) {
         // Service TinyUSB ourselves, once per loop, as the ONLY caller.
         // PICO_STDIO_USB_ENABLE_IRQ_BACKGROUND_TASK is disabled (see
@@ -136,6 +148,23 @@ int main() {
 			if (last_serial_rx_time[i] == 0 || (now - last_serial_rx_time[i] > 200)) {
 				reset_packet(packets[i], static_cast<uint8_t>(i));
 			}
+		}
+
+		// USB soft-clear: no bytes from the host in 3s, and we haven't tried
+		// this in the last 3s either (so a still-absent host doesn't make us
+		// spam disconnect/reconnect every loop). Non-blocking: disconnect now,
+		// reconnect once the scheduled delay has actually elapsed.
+		if (!usb_reconnect_pending &&
+			(now - last_byte_time > 3000) &&
+			(now - last_usb_clear_ms > 3000)) {
+			tud_disconnect();
+			usb_reconnect_at = make_timeout_time_ms(250);
+			usb_reconnect_pending = true;
+			last_usb_clear_ms = now;
+		}
+		if (usb_reconnect_pending && time_reached(usb_reconnect_at)) {
+			tud_connect();
+			usb_reconnect_pending = false;
 		}
 
 		// Pause SPI so Slave can hard-reset with an idle bus
