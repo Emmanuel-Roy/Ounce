@@ -2,6 +2,7 @@ import sys
 import time
 import struct
 import argparse
+import os
 import re
 import subprocess
 import threading
@@ -701,8 +702,25 @@ def group_modes(modes):
     bandwidth-limited over USB (this card caps at 4K30), while compressed ones
     (mjpeg) carry 4K60, 1440p144 and 1080p240. Someone picking a mode needs to
     see which side of that line they are on."""
-    raw = [m for m in modes if m[3].lower() in RAW_FORMATS]
-    comp = [m for m in modes if m[3].lower() not in RAW_FORMATS]
+    def dedupe(ms, prefer):
+        """One entry per resolution+rate.
+
+        The card advertises the same resolution under several pixel formats
+        (nv12, yuv420p, yuyv422...), which triples the list for no user-visible
+        benefit and pushes the lower resolutions off the bottom of the menu.
+        Keep one per (w, h, fps), preferring the format that decodes best."""
+        best = {}
+        for m in ms:
+            k = (m[0], m[1], m[2])
+            cur = best.get(k)
+            if cur is None or (m[3].lower() in prefer and cur[3].lower() not in prefer):
+                best[k] = m
+        return list(best.values())
+
+    raw = dedupe([m for m in modes if m[3].lower() in RAW_FORMATS],
+                 prefer=("nv12", "yuv420p"))
+    comp = dedupe([m for m in modes if m[3].lower() not in RAW_FORMATS],
+                  prefer=("mjpeg",))
     key = lambda m: (m[0] * m[1], m[2])
     return sorted(raw, key=key, reverse=True), sorted(comp, key=key, reverse=True)
 
@@ -720,7 +738,10 @@ class Toolbar:
         self.modes_comp = []
         self.device = None
         self.mode = None
-        self.open_menu = None        # None | 'device' | 'mode'
+        self.hdr = False
+        self.pads = []               # [(idx, name)] real controllers
+        self.slots = {}              # slot -> 'keyboard' | pad index | None
+        self.open_menu = None        # None | 'device' | 'mode' | 'hdr' | 'slot0'..
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
 
     def set_sources(self, devices, modes, device, mode):
@@ -728,6 +749,21 @@ class Toolbar:
         self.modes_raw, self.modes_comp = group_modes(modes)
         self.device = device
         self.mode = mode
+
+    def set_inputs(self, pads, slots):
+        self.pads = pads
+        self.slots = dict(slots)
+
+    def _slot_label(self, slot):
+        v = self.slots.get(slot)
+        if v is None:
+            return "off"
+        if v == "keyboard":
+            return "kbd"
+        for i, n in self.pads:
+            if i == v:
+                return n.split("(")[0].strip()[:12]
+        return f"pad{v}"
 
     def _font(self, size):
         return _pg.font.SysFont("segoeui", size) or _pg.font.SysFont("consolas", size)
@@ -742,28 +778,51 @@ class Toolbar:
         _pg.draw.rect(surface, (28, 28, 34), (0, 0, w, TOOLBAR_H))
         _pg.draw.line(surface, (60, 60, 72), (0, TOOLBAR_H - 1), (w, TOOLBAR_H - 1))
 
-        x = 10
-        for kind, label in (("device", self.device or "no device"),
-                            ("mode", mode_label(self.mode) if self.mode else "default mode")):
-            cap = ("Input: " if kind == "device" else "Mode: ") + str(label)
-            txt = f.render(cap + "  v", True, (225, 225, 235))
-            rect = _pg.Rect(x, 6, txt.get_width() + 16, TOOLBAR_H - 12)
-            hot = self.open_menu == kind
-            _pg.draw.rect(surface, (52, 52, 64) if hot else (40, 40, 50), rect, border_radius=4)
-            surface.blit(txt, (rect.x + 8, rect.y + 3))
-            self._hit.append((rect, "open", kind))
-            x += rect.width + 10
+        buttons = [
+            ("device", "In: " + str(self.device or "none")),
+            ("mode", "Mode: " + (mode_label(self.mode) if self.mode else "default")),
+            ("hdr", "HDR: " + ("on" if self.hdr else "off")),
+        ]
+        for s in range(NUM_SLOTS):
+            buttons.append((f"slot{s}", f"P{s + 1}: {self._slot_label(s)}"))
 
-        hint = f.render("F11 fullscreen", True, (120, 120, 138))
-        surface.blit(hint, (w - hint.get_width() - 10, 9))
+        x = 8
+        for kind, cap in buttons:
+            txt = f.render(cap, True, (225, 225, 235))
+            rect = _pg.Rect(x, 5, txt.get_width() + 14, TOOLBAR_H - 10)
+            hot = self.open_menu == kind
+            active = kind.startswith("slot") and self.slots.get(int(kind[4:])) is not None
+            bg = (52, 52, 64) if hot else ((38, 58, 44) if active else (40, 40, 50))
+            _pg.draw.rect(surface, bg, rect, border_radius=4)
+            surface.blit(txt, (rect.x + 7, rect.y + 4))
+            self._hit.append((rect, "open", kind))
+            x += rect.width + 6
+
+        hint = f.render("F11", True, (120, 120, 138))
+        if x < w - hint.get_width() - 12:
+            surface.blit(hint, (w - hint.get_width() - 10, 9))
 
         if self.open_menu:
             self._draw_menu(surface, f)
 
     def _draw_menu(self, surface, f):
         items = []
+        menu_x = 10
         if self.open_menu == "device":
             items = [("device", d, d) for d in self.devices]
+        elif self.open_menu == "hdr":
+            items = [("hdr", "HDR on  (pass through, no tone mapping)", True),
+                     ("hdr", "HDR off (tone map to SDR)", False)]
+        elif self.open_menu and self.open_menu.startswith("slot"):
+            slot = int(self.open_menu[4:])
+            items = [("slot", "Keyboard", (slot, "keyboard"))]
+            items += [("slot", name, (slot, idx)) for idx, name in self.pads]
+            items.append(("slot", "Disabled", (slot, None)))
+            # Open under the button that was clicked, not at the left edge.
+            for rect, kind, value in self._hit:
+                if kind == "open" and value == self.open_menu:
+                    menu_x = rect.x
+                    break
         else:
             # Grouped, because raw vs compressed is what decides whether 4K60
             # is even on the table.
@@ -777,7 +836,8 @@ class Toolbar:
         rowh, pad = 22, 6
         wmenu = max([f.size(t)[0] for _, t, _ in items] or [200]) + 28
         hmenu = rowh * len(items) + pad * 2
-        mx, my = 10, TOOLBAR_H
+        mx, my = menu_x, TOOLBAR_H
+        mx = max(4, min(mx, surface.get_width() - wmenu - 4))
         hmenu = min(hmenu, surface.get_height() - my - 10)
 
         _pg.draw.rect(surface, (24, 24, 30), (mx, my, wmenu, hmenu))
@@ -790,7 +850,16 @@ class Toolbar:
             if kind is None:
                 surface.blit(f.render(text, True, (130, 130, 150)), (mx + 8, y + 3))
             else:
-                sel = (value == self.device) if kind == "device" else (value == self.mode)
+                if kind == "device":
+                    sel = value == self.device
+                elif kind == "mode":
+                    sel = value == self.mode
+                elif kind == "hdr":
+                    sel = value == self.hdr
+                elif kind == "slot":
+                    sel = self.slots.get(value[0]) == value[1]
+                else:
+                    sel = False
                 rect = _pg.Rect(mx + 2, y, wmenu - 4, rowh)
                 if sel:
                     _pg.draw.rect(surface, (48, 74, 58), rect, border_radius=3)
@@ -825,7 +894,7 @@ class VlcPreview:
     The window handle is the pygame window's, so it is still the window Steam
     Input attaches to."""
 
-    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None):
+    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None, hdr=False):
         self.error = None
         self._player = None
         self._inst = None
@@ -836,13 +905,20 @@ class VlcPreview:
             return
         try:
             # --no-xlib is harmless on Windows; the rest keeps latency down.
-            self._inst = vlc.Instance([
+            vlc_args = [
                 "--no-video-title-show",
                 "--quiet",
                 "--network-caching=0",
                 "--live-caching=0",
                 "--file-caching=0",
-            ])
+            ]
+            # HDR handling. An HDR10 capture shown untouched on an SDR display
+            # looks washed out and grey, so "HDR off" tone maps it down with
+            # Hable (VLC's recommended filmic curve). "HDR on" uses a linear
+            # peak-to-peak stretch instead, which is what you want when the
+            # display is itself HDR and should receive the range untouched.
+            vlc_args += ["--tone-mapping=5" if hdr else "--tone-mapping=3"]
+            self._inst = vlc.Instance(vlc_args)
             self._player = self._inst.media_player_new()
             # The mode MUST be requested explicitly. DirectShow otherwise hands
             # over the first advertised format, which on this card is 640x480 -
@@ -1245,8 +1321,12 @@ def window_client_size():
         return _window.get_size()
 
 
-def snap_window_to_aspect(aspect):
-    """Force the window's client area to `aspect`, keeping its width.
+def snap_window_to_aspect(aspect, extra_h=0):
+    """Force the window so the VIDEO area is `aspect`, keeping its width.
+
+    extra_h is space the video does not get - the toolbar strip. Sizing the
+    whole client to 16:9 and then carving the toolbar out of it leaves the
+    video area at the wrong shape, which is exactly how black bars come back.
 
     Resizing via Win32 rather than pygame.display.set_mode() is deliberate:
     set_mode can recreate the window and invalidate the HWND that VLC is
@@ -1271,7 +1351,7 @@ def snap_window_to_aspect(aspect):
         chrome_h = (wr.bottom - wr.top) - (cr.bottom - cr.top)
 
         client_w = cr.right - cr.left
-        want_client_h = int(round(client_w / aspect))
+        want_client_h = int(round(client_w / aspect)) + int(extra_h)
         if abs(want_client_h - (cr.bottom - cr.top)) <= 2:
             return                        # already the right shape
         SWP_NOMOVE, SWP_NOZORDER = 0x0002, 0x0004
@@ -1645,6 +1725,9 @@ def main():
                         help="List capture devices ffmpeg can see and exit.")
     parser.add_argument("--window", action="store_true",
                         help="Force the preview window even when not launched by Steam.")
+    parser.add_argument("--hdr", action="store_true",
+                        help="Start with HDR passthrough instead of tone mapping to SDR. "
+                             "Toggleable from the toolbar.")
     parser.add_argument("--fullscreen", action="store_true",
                         help="Start in borderless fullscreen. F11 toggles it at any "
                              "time, Esc leaves it.")
@@ -1762,6 +1845,13 @@ def main():
                 slot_sources.setdefault(slot, []).append(
                     ("pad", (c, merged), f"[{idx}] {name}"
                      + (f" (+{len(pad_over)} rebinds)" if pad_over else "")))
+    elif not args.assign and (args.window or os.environ.get("OUNCE_WINDOW") == "1"
+                              or os.environ.get("SteamAppId")
+                              or os.environ.get("SteamGameId")):
+        # With a window there is a toolbar to manage slots from, so do not
+        # block on a console prompt. Start with Controller 1 on the keyboard.
+        slot_sources[0] = [("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard")]
+
     elif not args.assign and not args.no_interactive and sys.stdin.isatty():
         # Run bare from a terminal: ask which input drives each virtual
         # controller. Skipped when piped/redirected (scripts, Steam) so
@@ -1931,7 +2021,8 @@ def main():
                     print("    mode: card advertised none; letting DirectShow choose")
                 if aname:
                     print(f"    audio: {aname} -> default Windows output")
-                vlc_preview = VlcPreview(hwnd, vname, aname, mode)
+                vlc_preview = VlcPreview(hwnd, vname, aname, mode, hdr=args.hdr)
+                toolbar.hdr = args.hdr
                 if vlc_preview.error:
                     print(f"[!] VLC backend failed: {vlc_preview.error}")
                     print("    Falling back to the ffmpeg pipe (lower resolution).")
@@ -1944,6 +2035,10 @@ def main():
                         vlc_aspect = mode[0] / mode[1]
                         if args.fullscreen:
                             toggle_borderless_fullscreen(True)
+                        # Size the window so the video AREA is the source
+                        # aspect, with the toolbar strip added on top of that.
+                        snap_window_to_aspect(vlc_aspect,
+                                              0 if is_fullscreen() else TOOLBAR_H)
                         layout_video_child(show_toolbar=not is_fullscreen())
                         vlc_preview.fit(video_child_size(not is_fullscreen()))
                         print("    F11 = borderless fullscreen, Esc = leave it")
@@ -2053,7 +2148,8 @@ def main():
                     # up and briefly shows bars. Keep re-applying it for a short
                     # while so the transition stays clean.
                     nonlocal refit_until
-                    snap_window_to_aspect(vlc_aspect)
+                    snap_window_to_aspect(vlc_aspect,
+                                          0 if is_fullscreen() else TOOLBAR_H)
                     layout_video_child(show_toolbar=not is_fullscreen())
                     if vlc_preview:
                         vlc_preview.fit(video_child_size(not is_fullscreen()))
@@ -2072,6 +2168,49 @@ def main():
                     if not picked:
                         return
                     kind, value = picked
+
+                    if kind == "slot":
+                        # Reassign a player slot live. Rebuilding slot_sources
+                        # also changes enabled_mask, which is what tells the
+                        # master which targets to poll at all.
+                        nonlocal enabled_mask, active_slots
+                        slot, src = value
+                        if src is None:
+                            slot_sources.pop(slot, None)
+                        elif src == "keyboard":
+                            slot_sources[slot] = [("keyboard",
+                                                   dict(DEFAULT_KEYBOARD_BINDINGS),
+                                                   "keyboard")]
+                        else:
+                            c, name = open_pad_once(src)
+                            slot_sources[slot] = [("pad", (c, dict(DEFAULT_PAD_BUTTONS)),
+                                                   f"[{src}] {name}")]
+                        active_slots = sorted(slot_sources)
+                        enabled_mask = 0
+                        for s in active_slots:
+                            enabled_mask |= (1 << s)
+                        toolbar.set_inputs(toolbar.pads,
+                                           {s: (None if s not in slot_sources else
+                                                ("keyboard"
+                                                 if slot_sources[s][0][0] == "keyboard"
+                                                 else src))
+                                            for s in range(NUM_SLOTS)})
+                        print(f"[+] Controller {slot + 1} -> "
+                              f"{'disabled' if src is None else src}")
+                        return
+
+                    if kind == "hdr":
+                        toolbar.hdr = value
+                        print(f"[+] HDR {'on (passthrough)' if value else 'off (tone mapped)'}")
+                        vlc_preview.stop()
+                        aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+                        vlc_preview = VlcPreview(_video_child, toolbar.device, aud,
+                                                 toolbar.mode, hdr=value)
+                        if vlc_preview.error:
+                            print(f"[!] {vlc_preview.error}")
+                        _refit()
+                        return
+
                     new_dev = value if kind == "device" else toolbar.device
                     new_modes = list_dshow_modes(new_dev) if kind == "device" else None
                     new_mode = (pick_best_mode(new_modes) if kind == "device" else value)
@@ -2080,7 +2219,8 @@ def main():
                           f"{value if kind == 'device' else mode_label(value)}")
                     vlc_preview.stop()
                     aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-                    vlc_preview = VlcPreview(_video_child, new_dev, aud, new_mode)
+                    vlc_preview = VlcPreview(_video_child, new_dev, aud, new_mode,
+                                             hdr=toolbar.hdr)
                     if vlc_preview.error:
                         print(f"[!] {vlc_preview.error}")
                     toolbar.set_sources(toolbar.devices,
