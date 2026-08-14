@@ -754,15 +754,15 @@ class Toolbar:
         self.pads = pads
         self.slots = dict(slots)
 
-    def _slot_label(self, slot):
+    def _slot_label(self, slot, short=True):
         v = self.slots.get(slot)
         if v is None:
-            return "off"
+            return "off" if short else "Disabled"
         if v == "keyboard":
-            return "kbd"
+            return "kbd" if short else "Keyboard"
         for i, n in self.pads:
             if i == v:
-                return n.split("(")[0].strip()[:12]
+                return n.split("(")[0].strip()[:12 if short else 40]
         return f"pad{v}"
 
     def _font(self, size):
@@ -817,8 +817,10 @@ class Toolbar:
                       "mode"),
                      ("go", f"HDR   :  {'on' if self.hdr else 'off'}", "hdr"),
                      (None, "-- controllers --", None)]
-            items += [("go", f"Controller {s + 1} :  {self._slot_label(s)}", f"slot{s}")
-                      for s in range(NUM_SLOTS)]
+            # Spell out what each controller is currently driven by, rather
+            # than an abbreviation - this is the screen people come here to read.
+            items += [("go", f"Controller {s + 1} :  {self._slot_label(s, short=False)}",
+                       f"slot{s}") for s in range(NUM_SLOTS)]
         elif self.open_menu == "device":
             items = [("device", d, d) for d in self.devices]
         elif self.open_menu == "hdr":
@@ -826,7 +828,8 @@ class Toolbar:
                      ("hdr", "HDR off (tone map to SDR)", False)]
         elif self.open_menu and self.open_menu.startswith("slot"):
             slot = int(self.open_menu[4:])
-            items = [(None, f"-- Controller {slot + 1} --", None),
+            items = [(None, f"-- Controller {slot + 1}  (now: "
+                            f"{self._slot_label(slot, short=False)}) --", None),
                      ("slot", "Keyboard", (slot, "keyboard"))]
             items += [("slot", name, (slot, idx)) for idx, name in self.pads]
             items.append(("slot", "Disabled", (slot, None)))
@@ -905,6 +908,33 @@ class VlcPreview:
     The window handle is the pygame window's, so it is still the window Steam
     Input attaches to."""
 
+    # One libvlc Instance per HDR setting, kept for the life of the process.
+    # Releasing an Instance and building a new one on every device/mode change
+    # deadlocks libvlc, which is what made switching capture modes hang. Only
+    # the MediaPlayer is recreated per change.
+    _instances = {}
+
+    @classmethod
+    def _instance(cls, vlc, hdr):
+        inst = cls._instances.get(bool(hdr))
+        if inst is None:
+            args = [
+                "--no-video-title-show",
+                "--quiet",
+                "--network-caching=0",
+                "--live-caching=0",
+                "--file-caching=0",
+                # HDR handling. An HDR10 capture shown untouched on an SDR
+                # display looks washed out, so "off" tone maps it down with
+                # Hable (VLC's recommended filmic curve); "on" uses a linear
+                # peak-to-peak stretch to pass the range through for a display
+                # that can actually show it.
+                "--tone-mapping=5" if hdr else "--tone-mapping=3",
+            ]
+            inst = vlc.Instance(args)
+            cls._instances[bool(hdr)] = inst
+        return inst
+
     def __init__(self, hwnd, video_dev, audio_dev=None, mode=None, hdr=False):
         self.error = None
         self._player = None
@@ -916,20 +946,7 @@ class VlcPreview:
             return
         try:
             # --no-xlib is harmless on Windows; the rest keeps latency down.
-            vlc_args = [
-                "--no-video-title-show",
-                "--quiet",
-                "--network-caching=0",
-                "--live-caching=0",
-                "--file-caching=0",
-            ]
-            # HDR handling. An HDR10 capture shown untouched on an SDR display
-            # looks washed out and grey, so "HDR off" tone maps it down with
-            # Hable (VLC's recommended filmic curve). "HDR on" uses a linear
-            # peak-to-peak stretch instead, which is what you want when the
-            # display is itself HDR and should receive the range untouched.
-            vlc_args += ["--tone-mapping=5" if hdr else "--tone-mapping=3"]
-            self._inst = vlc.Instance(vlc_args)
+            self._inst = self._instance(vlc, hdr)
             self._player = self._inst.media_player_new()
             # The mode MUST be requested explicitly. DirectShow otherwise hands
             # over the first advertised format, which on this card is 640x480 -
@@ -940,14 +957,17 @@ class VlcPreview:
                     ":live-caching=0"]
             if mode:
                 w, h, fps, pixfmt = mode
-                # VLC wants a FourCC here. MJPEG is the important one: it is
-                # the only format offering 4K60 / 1440p144 / 1080p240, because
-                # uncompressed at those rates will not fit over USB.
-                chroma = {"mjpeg": "MJPG", "yuyv422": "YUY2",
-                          "yuv420p": "I420", "nv12": "NV12"}.get(pixfmt, pixfmt)
-                opts += [f":dshow-size={w}x{h}",
-                         f":dshow-fps={fps}",
-                         f":dshow-chroma={chroma}"]
+                opts += [f":dshow-size={w}x{h}", f":dshow-fps={fps}"]
+                # Only force a chroma when it is actually needed, i.e. to
+                # select MJPEG - the one format carrying 4K60 / 1440p144 /
+                # 1080p240, since uncompressed will not fit over USB at those
+                # rates. For raw modes size+fps is enough and VLC negotiates
+                # the rest; passing a fourcc there does more harm than good
+                # (":dshow-chroma=NV12" is rejected and the stream never
+                # starts, which is why raw modes appeared broken).
+                chroma = {"mjpeg": "MJPG", "mjpg": "MJPG"}.get(pixfmt.lower())
+                if chroma:
+                    opts.append(f":dshow-chroma={chroma}")
             media = self._inst.media_new(mrl, *opts)
             self._player.set_media(media)
             self._player.set_hwnd(hwnd)       # render into the pygame window
@@ -987,13 +1007,39 @@ class VlcPreview:
         except Exception:
             return False
 
-    def stop(self):
-        for obj, meth in ((self._player, "stop"), (self._inst, "release")):
+    def stop_async(self):
+        """Begin tearing the player down; returns an Event set when finished.
+
+        libvlc_media_player_stop() blocks until the embedded video output shuts
+        down, and that vout needs its window's message loop to be pumped to get
+        there. Our thread owns that pump, so calling stop() directly deadlocks:
+        VLC waits for the message loop, the message loop waits for stop().
+
+        Tearing down off-thread lets the caller keep pumping messages, which is
+        what actually lets the shutdown complete. The shared Instance is never
+        released here - only the player."""
+        done = threading.Event()
+        player, self._player = self._player, None
+
+        def _teardown():
             try:
-                if obj:
-                    getattr(obj, meth)()
+                if player:
+                    player.stop()
+                    player.release()
             except Exception:
                 pass
+            finally:
+                done.set()
+
+        if player is None:
+            done.set()
+        else:
+            threading.Thread(target=_teardown, daemon=True).start()
+        return done
+
+    def stop(self):
+        """Fire-and-forget teardown, for exit paths where nothing waits."""
+        self.stop_async()
 
 
 def _explain_capture_error(stderr_text):
@@ -2209,6 +2255,23 @@ def main():
                         vlc_preview.fit(video_child_size(not is_fullscreen()))
                     refit_until = time.monotonic() + 0.6
 
+                def _swap_vlc(make_player):
+                    """Replace the VLC player, pumping messages during teardown.
+
+                    The pump is load-bearing: stop() cannot finish unless the
+                    window's message loop keeps running (see stop_async)."""
+                    nonlocal vlc_preview
+                    if vlc_preview is not None:
+                        done = vlc_preview.stop_async()
+                        deadline = time.monotonic() + 4.0
+                        while not done.is_set() and time.monotonic() < deadline:
+                            pump_window(vlc_active=True)
+                            time.sleep(0.01)
+                    vlc_preview = make_player()
+                    if vlc_preview.error:
+                        print(f"[!] {vlc_preview.error}")
+                    _refit()
+
                 def _on_click(pos):
                     """Toolbar click: switch input device or capture mode.
 
@@ -2251,13 +2314,9 @@ def main():
                     if kind == "hdr":
                         toolbar.hdr = value
                         print(f"[+] HDR {'on (passthrough)' if value else 'off (tone mapped)'}")
-                        vlc_preview.stop()
                         aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-                        vlc_preview = VlcPreview(_video_child, toolbar.device, aud,
-                                                 toolbar.mode, hdr=value)
-                        if vlc_preview.error:
-                            print(f"[!] {vlc_preview.error}")
-                        _refit()
+                        _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
+                                                     toolbar.mode, hdr=value))
                         return
 
                     new_dev = value if kind == "device" else toolbar.device
@@ -2266,12 +2325,9 @@ def main():
 
                     print(f"[+] Switching {kind} -> "
                           f"{value if kind == 'device' else mode_label(value)}")
-                    vlc_preview.stop()
                     aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-                    vlc_preview = VlcPreview(_video_child, new_dev, aud, new_mode,
-                                             hdr=toolbar.hdr)
-                    if vlc_preview.error:
-                        print(f"[!] {vlc_preview.error}")
+                    _swap_vlc(lambda: VlcPreview(_video_child, new_dev, aud, new_mode,
+                                                 hdr=toolbar.hdr))
                     toolbar.set_sources(toolbar.devices,
                                         new_modes if new_modes is not None
                                         else (toolbar.modes_comp + toolbar.modes_raw),
