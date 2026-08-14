@@ -71,8 +71,132 @@ SPI_TARGET_ID_MASK   = 0x03
 SPI_AUX_MASK_HOME    = (1 << 6)
 SPI_AUX_MASK_CAPTURE = (1 << 7)
 
+# Bits 2..5: which player slots the host has enabled, one bit per slot. The
+# enabled set is arbitrary (e.g. only slots 1 and 3), so the master cannot
+# infer it from which targets happen to have been addressed.
+SPI_ENABLED_SHIFT    = 2
+SPI_ENABLED_MASK     = 0x3C
+
 def is_key_down(vk):
     return (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000) != 0
+
+
+NUM_SLOTS = 4          # the master dispatches to 4 target Picos
+NEUTRAL = (0, 128, 128, 128, 128, 0)
+
+
+def default_config():
+    """Slot 0 driven by the built-in keyboard map plus the first controller;
+    the rest disabled. Matches historical single-player behaviour."""
+    return {
+        "slots": {
+            "0": {"keyboard": dict(DEFAULT_KEYBOARD_BINDINGS), "pad": None, "pad_buttons": {}},
+            "1": {"keyboard": {}, "pad": None, "pad_buttons": {}},
+            "2": {"keyboard": {}, "pad": None, "pad_buttons": {}},
+            "3": {"keyboard": {}, "pad": None, "pad_buttons": {}},
+        }
+    }
+
+
+def load_config(path):
+    import json
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    if "slots" not in cfg or not isinstance(cfg["slots"], dict):
+        raise ValueError("config must contain a 'slots' object")
+
+    errs = []
+    for slot_s, sc in cfg["slots"].items():
+        try:
+            slot = int(slot_s)
+        except ValueError:
+            errs.append(f"slot key '{slot_s}' is not a number"); continue
+        if not 0 <= slot < NUM_SLOTS:
+            errs.append(f"slot {slot} out of range 0..{NUM_SLOTS - 1}")
+        errs += validate_bindings(sc.get("keyboard", {}) or {},
+                                  f"slot {slot} keyboard")
+        errs += validate_bindings(sc.get("pad_buttons", {}) or {},
+                                  f"slot {slot} pad_buttons", pad=True)
+    if errs:
+        raise ValueError("\n      ".join(errs))
+    return cfg
+
+
+def write_default_config(path):
+    import json
+    cfg = default_config()
+    cfg["_comment"] = [
+        "Ounce input mapping. One entry per virtual Switch controller slot.",
+        "A slot is ENABLED if it has any keyboard binding or a pad assigned;",
+        "the enabled set is sent to the master, and may be any subset -",
+        "e.g. only slots 1 and 3.",
+        "",
+        "'keyboard' maps ACTION -> key name. Actions: " + " ".join(ALL_ACTIONS),
+        "Axis actions are digital (LX- pushes left, LX+ right, etc).",
+        "Key names: A-Z 0-9 UP DOWN LEFT RIGHT SPACE ENTER TAB SHIFT CTRL ALT",
+        "           F1-F12 NUM0-NUM9 COMMA PERIOD SLASH etc.",
+        "",
+        "'pad' selects a controller by index or name substring, or null.",
+        "'pad_buttons' overrides pad bindings; ACTION -> SDL button name",
+        "           (A B X Y DPAD_UP LEFTSHOULDER BACK START GUIDE MISC1 ...).",
+        "           Left empty, the positional defaults are used.",
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+
+def parse_assignment(spec):
+    """Parse one 'SLOT=SOURCE' assignment into ([slots], source).
+
+    SLOT is a slot number, a comma list ('0,2'), or 'all' to drive every slot
+    from one source. SOURCE is 'keyboard', or 'pad:N' / 'pad:<name substring>'.
+    Assigning more than one source to the same slot merges them, so a slot can
+    be driven by a keyboard and a pad at once."""
+    if "=" not in spec:
+        raise ValueError(f"expected SLOT=SOURCE, got '{spec}'")
+    slot_s, src = spec.split("=", 1)
+    slot_s = slot_s.strip().lower()
+
+    if slot_s == "all":
+        slots = list(range(NUM_SLOTS))
+    else:
+        slots = []
+        for part in slot_s.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                n = int(part)
+            except ValueError:
+                raise ValueError(f"slot must be a number, a comma list, or 'all'; got '{part}'")
+            if not 0 <= n < NUM_SLOTS:
+                raise ValueError(f"slot {n} out of range 0..{NUM_SLOTS - 1}")
+            slots.append(n)
+        if not slots:
+            raise ValueError("no slots given")
+    src = src.strip().lower()
+    if src in ("keyboard", "kbd", "key"):
+        return slots, ("keyboard", None)
+    if src.startswith("pad:") or src.startswith("gamepad:"):
+        return slots, ("pad", src.split(":", 1)[1].strip())
+    raise ValueError(f"unknown source '{src}' (use keyboard, or pad:N / pad:<name>)")
+
+
+def resolve_pad(ref):
+    """Resolve a pad reference (index or name substring) to a controller index."""
+    if not gamepad_available():
+        return None
+    count = _pg.joystick.get_count()
+    try:
+        idx = int(ref)
+        return idx if 0 <= idx < count else None
+    except ValueError:
+        pass
+    ref_l = ref.lower()
+    for i in range(count):
+        if ref_l in _pg.joystick.Joystick(i).get_name().lower():
+            return i
+    return None
 
 
 def _merge_axis(a, b):
@@ -82,25 +206,128 @@ def _merge_axis(a, b):
     return a if abs(a - 128) >= abs(b - 128) else b
 
 
-def merge_inputs(kb, pad):
-    """Merge keyboard and controller state. Buttons are OR'd so either source
-    can press anything; axes take whichever is displaced further."""
-    if pad is None:
-        return kb
-    kb_b, kb_lx, kb_ly, kb_rx, kb_ry, kb_aux = kb
-    pd_b, pd_lx, pd_ly, pd_rx, pd_ry, pd_aux = pad
-    return (
-        kb_b | pd_b,
-        _merge_axis(kb_lx, pd_lx),
-        _merge_axis(kb_ly, pd_ly),
-        _merge_axis(kb_rx, pd_rx),
-        _merge_axis(kb_ry, pd_ry),
-        kb_aux | pd_aux,
-    )
+def merge_inputs(*states):
+    """Merge any number of input states. Buttons and Home/Capture are OR'd so
+    any source can press anything; each axis takes whichever source is pushed
+    furthest from centre, so an idle source never cancels an active one."""
+    out = None
+    for s in states:
+        if s is None:
+            continue
+        if out is None:
+            out = s
+            continue
+        out = (
+            out[0] | s[0],
+            _merge_axis(out[1], s[1]),
+            _merge_axis(out[2], s[2]),
+            _merge_axis(out[3], s[3]),
+            _merge_axis(out[4], s[4]),
+            out[5] | s[5],
+        )
+    return out if out is not None else NEUTRAL
+
+
+# --------------------------------------------------------------------------
+# Binding tables. An "action" is a virtual Switch Pro input; a binding maps a
+# physical key or pad button onto one. Every slot has its own binding set, so
+# each virtual controller can be driven by whatever the user chooses.
+# --------------------------------------------------------------------------
+
+BUTTON_ACTIONS = {
+    "UP": SPI_MASK_UP, "DOWN": SPI_MASK_DOWN,
+    "LEFT": SPI_MASK_LEFT, "RIGHT": SPI_MASK_RIGHT,
+    "B1": SPI_MASK_B1, "B2": SPI_MASK_B2, "B3": SPI_MASK_B3, "B4": SPI_MASK_B4,
+    "L1": SPI_MASK_L1, "R1": SPI_MASK_R1, "L2": SPI_MASK_L2, "R2": SPI_MASK_R2,
+    "S1": SPI_MASK_S1, "S2": SPI_MASK_S2, "L3": SPI_MASK_L3, "R3": SPI_MASK_R3,
+}
+AUX_ACTIONS = {"HOME": SPI_AUX_MASK_HOME, "CAPTURE": SPI_AUX_MASK_CAPTURE}
+# action -> (axis index into [lx, ly, rx, ry], value when pressed)
+AXIS_ACTIONS = {
+    "LX-": (0, 0), "LX+": (0, 255), "LY-": (1, 0), "LY+": (1, 255),
+    "RX-": (2, 0), "RX+": (2, 255), "RY-": (3, 0), "RY+": (3, 255),
+}
+ALL_ACTIONS = list(BUTTON_ACTIONS) + list(AUX_ACTIONS) + list(AXIS_ACTIONS)
+
+
+def _build_vk_names():
+    t = {}
+    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+        t[c] = ord(c)
+    t.update({
+        "UP": 0x26, "DOWN": 0x28, "LEFT": 0x25, "RIGHT": 0x27,
+        "SPACE": 0x20, "ENTER": 0x0D, "TAB": 0x09, "ESC": 0x1B,
+        "BACKSPACE": 0x08, "SHIFT": 0x10, "CTRL": 0x11, "ALT": 0x12,
+        "LSHIFT": 0xA0, "RSHIFT": 0xA1, "LCTRL": 0xA2, "RCTRL": 0xA3,
+        "COMMA": 0xBC, "PERIOD": 0xBE, "SLASH": 0xBF, "SEMICOLON": 0xBA,
+        "QUOTE": 0xDE, "LBRACKET": 0xDB, "RBRACKET": 0xDD, "BACKSLASH": 0xDC,
+        "MINUS": 0xBD, "EQUALS": 0xBB, "GRAVE": 0xC0,
+        "INSERT": 0x2D, "DELETE": 0x2E, "HOME": 0x24, "END": 0x23,
+        "PAGEUP": 0x21, "PAGEDOWN": 0x22,
+    })
+    for i in range(1, 13):
+        t[f"F{i}"] = 0x6F + i
+    for i in range(10):
+        t[f"NUM{i}"] = 0x60 + i
+    return t
+
+
+VK_NAMES = _build_vk_names()
+
+# Default pad bindings, by SDL GameController button name. Face buttons are
+# positional, so a DualSense cross (bottom) lands on the Switch's B (bottom).
+DEFAULT_PAD_BUTTONS = {
+    "UP": "DPAD_UP", "DOWN": "DPAD_DOWN", "LEFT": "DPAD_LEFT", "RIGHT": "DPAD_RIGHT",
+    "B1": "A", "B2": "B", "B3": "X", "B4": "Y",
+    "L1": "LEFTSHOULDER", "R1": "RIGHTSHOULDER",
+    "S1": "BACK", "S2": "START", "L3": "LEFTSTICK", "R3": "RIGHTSTICK",
+    "HOME": "GUIDE", "CAPTURE": "MISC1",
+}
+
+DEFAULT_KEYBOARD_BINDINGS = {
+    "LX-": "A", "LX+": "D", "LY-": "W", "LY+": "S",
+    "RX-": "7", "RX+": "9", "RY-": "8", "RY+": "0",
+    "UP": "UP", "DOWN": "DOWN", "LEFT": "LEFT", "RIGHT": "RIGHT",
+    "B4": "I", "B3": "J", "B1": "K", "B2": "L",
+    "L2": "Y", "L1": "U", "R1": "O", "R2": "P",
+    "S2": "N", "S1": "M", "L3": "Z", "R3": "X",
+    "HOME": "H", "CAPTURE": "C",
+}
+
+
+def validate_bindings(bindings, where, pad=False):
+    """Reject unknown actions/keys loudly rather than silently ignoring them -
+    a typo in a config file should not present as a dead button."""
+    errs = []
+    for action, phys in bindings.items():
+        if action not in ALL_ACTIONS:
+            errs.append(f"{where}: unknown action '{action}'")
+        elif not pad and str(phys).upper() not in VK_NAMES:
+            errs.append(f"{where}: unknown key '{phys}' for action '{action}'")
+    return errs
+
+
+def read_keyboard_mapped(bindings):
+    """Read a keyboard binding set into (buttons, lx, ly, rx, ry, aux)."""
+    buttons = 0
+    aux = 0
+    axes = [128, 128, 128, 128]
+    for action, key in bindings.items():
+        vk = VK_NAMES.get(str(key).upper())
+        if vk is None or not is_key_down(vk):
+            continue
+        if action in BUTTON_ACTIONS:
+            buttons |= BUTTON_ACTIONS[action]
+        elif action in AUX_ACTIONS:
+            aux |= AUX_ACTIONS[action]
+        elif action in AXIS_ACTIONS:
+            idx, val = AXIS_ACTIONS[action]
+            axes[idx] = val
+    return (buttons, axes[0], axes[1], axes[2], axes[3], aux)
 
 
 def read_keyboard():
-    """Read the keyboard map into (buttons, lx, ly, rx, ry, aux)."""
+    """Read the default keyboard map into (buttons, lx, ly, rx, ry, aux)."""
     # Left Analog Stick (WASD)
     lx, ly = 128, 128
     if is_key_down(VK_A): lx = 0
@@ -249,52 +476,58 @@ def _axis_to_byte(v, deadzone):
     return 0 if b < 0 else (255 if b > 255 else b)
 
 
-def read_controller(c, deadzone, trigger_threshold):
-    """Read a controller into (buttons, lx, ly, rx, ry, aux)."""
+def _pad_button(c, name):
+    """Read an SDL GameController button by name. Some buttons (MISC1 / the
+    Share-Capture key) do not exist on every pad, so this fails soft."""
+    try:
+        return bool(c.get_button(getattr(_pg, "CONTROLLER_BUTTON_" + name)))
+    except Exception:
+        return False
+
+
+def read_controller(c, deadzone, trigger_threshold, button_bindings=None):
+    """Read a controller into (buttons, lx, ly, rx, ry, aux).
+
+    button_bindings maps an action ('B1', 'HOME', 'LX-', ...) to an SDL
+    GameController button name, so a slot can rebind the pad however it likes.
+    Analog sticks always drive the four axes; digital axis actions (LX- etc.)
+    may additionally be bound to buttons, e.g. to use a d-pad as a stick."""
     P = _pg
     _pg.event.pump()
+    bindings = DEFAULT_PAD_BUTTONS if button_bindings is None else button_bindings
+
     b = 0
-
-    # D-pad
-    if c.get_button(P.CONTROLLER_BUTTON_DPAD_UP):    b |= SPI_MASK_UP
-    if c.get_button(P.CONTROLLER_BUTTON_DPAD_DOWN):  b |= SPI_MASK_DOWN
-    if c.get_button(P.CONTROLLER_BUTTON_DPAD_LEFT):  b |= SPI_MASK_LEFT
-    if c.get_button(P.CONTROLLER_BUTTON_DPAD_RIGHT): b |= SPI_MASK_RIGHT
-
-    # Face buttons, mapped by physical position rather than by letter, so a
-    # DualSense cross (bottom) lands on the Switch's B (bottom) and so on.
-    if c.get_button(P.CONTROLLER_BUTTON_A): b |= SPI_MASK_B1   # bottom
-    if c.get_button(P.CONTROLLER_BUTTON_B): b |= SPI_MASK_B2   # right
-    if c.get_button(P.CONTROLLER_BUTTON_X): b |= SPI_MASK_B3   # left
-    if c.get_button(P.CONTROLLER_BUTTON_Y): b |= SPI_MASK_B4   # top
-
-    if c.get_button(P.CONTROLLER_BUTTON_LEFTSHOULDER):  b |= SPI_MASK_L1
-    if c.get_button(P.CONTROLLER_BUTTON_RIGHTSHOULDER): b |= SPI_MASK_R1
+    aux = 0
+    axes = [128, 128, 128, 128]
+    for action, btn in bindings.items():
+        if not _pad_button(c, str(btn).upper()):
+            continue
+        if action in BUTTON_ACTIONS:
+            b |= BUTTON_ACTIONS[action]
+        elif action in AUX_ACTIONS:
+            aux |= AUX_ACTIONS[action]
+        elif action in AXIS_ACTIONS:
+            idx, val = AXIS_ACTIONS[action]
+            axes[idx] = val
 
     # The Switch Pro's ZL/ZR are digital, so analog triggers get thresholded.
-    if c.get_axis(P.CONTROLLER_AXIS_TRIGGERLEFT)  > trigger_threshold: b |= SPI_MASK_L2
-    if c.get_axis(P.CONTROLLER_AXIS_TRIGGERRIGHT) > trigger_threshold: b |= SPI_MASK_R2
-
-    if c.get_button(P.CONTROLLER_BUTTON_BACK):       b |= SPI_MASK_S1   # minus
-    if c.get_button(P.CONTROLLER_BUTTON_START):      b |= SPI_MASK_S2   # plus
-    if c.get_button(P.CONTROLLER_BUTTON_LEFTSTICK):  b |= SPI_MASK_L3
-    if c.get_button(P.CONTROLLER_BUTTON_RIGHTSTICK): b |= SPI_MASK_R3
-
-    aux = 0
-    if c.get_button(P.CONTROLLER_BUTTON_GUIDE):
-        aux |= SPI_AUX_MASK_HOME
-    # Share/Capture is MISC1 in SDL and is absent on some pads.
     try:
-        if c.get_button(P.CONTROLLER_BUTTON_MISC1):
-            aux |= SPI_AUX_MASK_CAPTURE
+        if c.get_axis(P.CONTROLLER_AXIS_TRIGGERLEFT) > trigger_threshold:
+            b |= SPI_MASK_L2
+        if c.get_axis(P.CONTROLLER_AXIS_TRIGGERRIGHT) > trigger_threshold:
+            b |= SPI_MASK_R2
     except Exception:
         pass
 
-    lx = _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_LEFTX), deadzone)
-    ly = _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_LEFTY), deadzone)
-    rx = _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_RIGHTX), deadzone)
-    ry = _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_RIGHTY), deadzone)
-    return b, lx, ly, rx, ry, aux
+    # Analog sticks win over any digital axis binding that is not pressed.
+    stick = (
+        _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_LEFTX), deadzone),
+        _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_LEFTY), deadzone),
+        _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_RIGHTX), deadzone),
+        _axis_to_byte(c.get_axis(P.CONTROLLER_AXIS_RIGHTY), deadzone),
+    )
+    axes = [_merge_axis(axes[i], stick[i]) for i in range(4)]
+    return b, axes[0], axes[1], axes[2], axes[3], aux
 
 def calculate_crc8(data):
     crc = 0x00
@@ -307,8 +540,12 @@ def calculate_crc8(data):
                 crc = (crc << 1) & 0xFF
     return crc
 
-def make_serial_packet(target_id, buttons, lx, ly, rx, ry, aux=0):
-    flags = (target_id & SPI_TARGET_ID_MASK) | aux
+def make_serial_packet(target_id, buttons, lx, ly, rx, ry, aux=0, enabled_mask=0x1):
+    # Bits 2..5 restate which slots are enabled in every packet, so the master
+    # re-syncs after any dropped packet and slots can be toggled at any time.
+    flags = ((target_id & SPI_TARGET_ID_MASK)
+             | ((enabled_mask << SPI_ENABLED_SHIFT) & SPI_ENABLED_MASK)
+             | aux)
     payload = struct.pack('<BBHBBBB', 0x5A, flags, buttons, lx, ly, rx, ry)
     crc = calculate_crc8(payload)
     return payload + bytes([crc])
@@ -334,10 +571,21 @@ def main():
     parser.add_argument("--target", type=int, default=0, help="Target Slave ID (0..3)")
     parser.add_argument("--max-packets", type=int, default=0, help="Exit automatically after transmitting N packets (0 = run continuously)")
     parser.add_argument("--relaunch-seconds", type=float, default=5.0, help="Fully close and re-exec the bridge (fresh serial connection) after this many seconds, as a safety net against a stuck link. 0 disables.")
+    parser.add_argument("--config", type=str, default=None,
+                        help="JSON file defining per-slot key/button bindings. "
+                             "Lets each virtual Switch controller be driven by "
+                             "whatever keys or pad buttons you choose.")
+    parser.add_argument("--dump-config", type=str, default=None, metavar="FILE",
+                        help="Write a commented default config to FILE and exit.")
+    parser.add_argument("--assign", action="append", default=[], metavar="SLOT=SOURCE",
+                        help="Assign an input to a player slot, e.g. --assign 0=keyboard "
+                             "--assign 1=pad:1 --assign 2=pad:DualSense. Repeatable; "
+                             "assigning several sources to one slot merges them. "
+                             "Default: slot 0 gets the keyboard plus the first controller.")
     parser.add_argument("--input", choices=["auto", "keyboard", "gamepad"], default="auto",
-                        help="Input source. 'auto' uses a physical controller if one is connected, else the keyboard.")
+                        help="Legacy single-slot mode when no --assign is given.")
     parser.add_argument("--controller", type=int, default=None,
-                        help="Controller index to use (see --list-controllers). Default: auto-pick.")
+                        help="Controller index for legacy single-slot mode (see --list-controllers).")
     parser.add_argument("--list-controllers", action="store_true",
                         help="List detected controllers and exit.")
     parser.add_argument("--deadzone", type=int, default=3000,
@@ -345,6 +593,12 @@ def main():
     parser.add_argument("--trigger-threshold", type=float, default=0.5,
                         help="Analog trigger level counted as a ZL/ZR press (0..1). Default 0.5.")
     args = parser.parse_args()
+
+    if args.dump_config:
+        write_default_config(args.dump_config)
+        print(f"[+] Wrote default config to {args.dump_config}")
+        print("    Edit it, then run with --config " + args.dump_config)
+        sys.exit(0)
 
     if args.list_controllers:
         found = list_controllers()
@@ -357,14 +611,98 @@ def main():
             print(f"  [{i}] {name}{tag}")
         sys.exit(0)
 
-    controller = None
-    if args.input in ("auto", "gamepad"):
-        controller = open_controller(args.controller)
-        if controller is None:
-            if args.input == "gamepad":
-                print("[-] --input gamepad requested but no usable controller. Exiting.")
+    # slot_sources[slot] = list of (kind, controller_or_None, label)
+    slot_sources = {}
+    opened_pads = {}          # controller index -> (Controller, name)
+
+    def open_pad_once(idx):
+        if idx not in opened_pads:
+            c = open_controller(idx)
+            if c is None:
                 sys.exit(1)
-            print("[+] Falling back to keyboard input.")
+            opened_pads[idx] = (c, _pg.joystick.Joystick(idx).get_name())
+        return opened_pads[idx]
+
+    if args.config:
+        try:
+            cfg = load_config(args.config)
+        except Exception as e:
+            print(f"[-] Bad config {args.config}:\n      {e}")
+            sys.exit(1)
+        for slot_s, sc in cfg["slots"].items():
+            slot = int(slot_s)
+            kb = sc.get("keyboard") or {}
+            pad_ref = sc.get("pad")
+            pad_over = sc.get("pad_buttons") or {}
+            if kb:
+                slot_sources.setdefault(slot, []).append(
+                    ("keyboard", kb, f"keyboard ({len(kb)} bindings)"))
+            if pad_ref is not None:
+                idx = resolve_pad(str(pad_ref))
+                if idx is None:
+                    print(f"[-] slot {slot}: no controller matching '{pad_ref}'")
+                    sys.exit(1)
+                c, name = open_pad_once(idx)
+                merged = dict(DEFAULT_PAD_BUTTONS)
+                merged.update({k: v for k, v in pad_over.items()})
+                slot_sources.setdefault(slot, []).append(
+                    ("pad", (c, merged), f"[{idx}] {name}"
+                     + (f" (+{len(pad_over)} rebinds)" if pad_over else "")))
+    elif args.assign:
+        for spec in args.assign:
+            try:
+                slots, (kind, ref) = parse_assignment(spec)
+            except ValueError as e:
+                print(f"[-] Bad --assign '{spec}': {e}")
+                sys.exit(1)
+            if kind == "keyboard":
+                for slot in slots:
+                    slot_sources.setdefault(slot, []).append(
+                        ("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard (default map)"))
+                continue
+            idx = resolve_pad(ref)
+            if idx is None:
+                print(f"[-] No controller matching '{ref}' (see --list-controllers).")
+                sys.exit(1)
+            c, name = open_pad_once(idx)
+            for slot in slots:
+                slot_sources.setdefault(slot, []).append(
+                    ("pad", (c, dict(DEFAULT_PAD_BUTTONS)), f"[{idx}] {name}"))
+    else:
+        # Legacy single-slot behaviour: everything drives one slot.
+        legacy = []
+        if args.input in ("auto", "gamepad"):
+            c = open_controller(args.controller)
+            if c is None:
+                if args.input == "gamepad":
+                    print("[-] --input gamepad requested but no usable controller. Exiting.")
+                    sys.exit(1)
+                print("[+] Falling back to keyboard input.")
+            else:
+                legacy.append(("pad", (c, dict(DEFAULT_PAD_BUTTONS)), "controller"))
+        if args.input != "gamepad":
+            legacy.append(("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard (default map)"))
+        slot_sources[args.target] = legacy
+
+    # The enabled set is whatever was assigned - it need not be contiguous, so
+    # "only slots 1 and 3" is expressible. This mask is sent to the master in
+    # every packet so it knows which targets to drive.
+    active_slots = sorted(slot_sources)
+    enabled_mask = 0
+    for s in active_slots:
+        enabled_mask |= (1 << s)
+    if not active_slots:
+        print("[-] No player slots enabled - nothing to drive. "
+              "Use --assign or --config.")
+        sys.exit(1)
+
+    print("[+] Player slots (enabled mask 0x%X):" % enabled_mask)
+    for s in range(NUM_SLOTS):
+        if s in slot_sources:
+            labels = ", ".join(lbl for _, _, lbl in slot_sources[s]) or "(nothing)"
+            print(f"      slot {s}: {labels}")
+        else:
+            print(f"      slot {s}: disabled")
 
     port_name = args.port or find_primary_port()
     if not port_name:
@@ -380,29 +718,29 @@ def main():
         print(f"[-] Error opening serial port {port_name}: {e}")
         sys.exit(1)
 
-    print("[+] Connected! Transmitting real-time momentary controls to Target %d..." % args.target)
-    print("\n--- Switch Pro Control Mapping ---")
-    print("  WASD           : Left Analog Stick (Up, Down, Left, Right)")
-    print("  7 8 9 0        : Right Analog Stick (Left, Up, Right, Down)")
-    print("  Arrow Keys     : D-Pad (Up, Down, Left, Right)")
-    print("  I              : X (Top Face Button)")
-    print("  J              : Y (Left Face Button)")
-    print("  K              : B (Bottom Face Button)")
-    print("  L              : A (Right Face Button)")
-    print("  Y              : ZL Trigger (L2)")
-    print("  U              : L Bumper (L1)")
-    print("  O              : R Bumper (R1)")
-    print("  P              : ZR Trigger (R2)")
-    print("  N / M          : Start (+) / Select (-)")
-    print("  Z / X          : L3 / R3 Stick Clicks")
-    print("  H / C          : Home / Capture")
+    print("[+] Connected! Driving slot(s) %s"
+          % ", ".join(str(s) for s in active_slots))
+
+    if args.config:
+        # Bindings came from the config file; the slot table printed above
+        # already describes them, and printing the built-in map here would
+        # actively mislead.
+        print("\n[+] Bindings loaded from %s" % args.config)
+    else:
+        print("\n--- Switch Pro Control Mapping (default keyboard map) ---")
+        print("  WASD           : Left Analog Stick (Up, Down, Left, Right)")
+        print("  7 8 9 0        : Right Analog Stick (Left, Up, Right, Down)")
+        print("  Arrow Keys     : D-Pad (Up, Down, Left, Right)")
+        print("  I / J / K / L  : X (top) / Y (left) / B (bottom) / A (right)")
+        print("  Y / U / O / P  : ZL / L / R / ZR")
+        print("  N / M          : Start (+) / Select (-)")
+        print("  Z / X          : L3 / R3 Stick Clicks")
+        print("  H / C          : Home / Capture")
+        print("  (--dump-config writes this out as an editable file)")
     print("  ESC            : Exit Bridge")
     print("------------------------------------------")
-    if controller is not None:
-        print("[+] KEYBOARD + CONTROLLER both live - either can drive any input.")
-        print("    On the pad: Guide = Home, Share/Capture = Capture.")
-    else:
-        print("[+] SILENT GAMEPLAY MODE ACTIVE.")
+    if opened_pads:
+        print("[+] Pads: Guide = Home, Share/Capture = Capture.")
     if args.relaunch_seconds > 0:
         print(f"[+] Auto-relaunch enabled: fresh connection every {args.relaunch_seconds:.0f}s.\n")
     else:
@@ -439,30 +777,37 @@ def main():
                 print("\n[+] Reached maximum packet limit of %d. Exiting." % args.max_packets)
                 break
 
-            # 1. Read every available source and merge them, so the keyboard
-            # and a physical controller both stay live at the same time.
-            pad_state = None
-            if controller is not None:
+            # 1. Build and send one packet per enabled slot. Each slot merges
+            # all of its own sources, so a slot can be driven by a keyboard and
+            # a pad at once, and different slots by different devices.
+            for slot in active_slots:
+                states = []
+                for kind, obj, _ in slot_sources[slot]:
+                    try:
+                        if kind == "keyboard":
+                            states.append(read_keyboard_mapped(obj))
+                        else:
+                            pad_obj, pad_binds = obj
+                            states.append(read_controller(
+                                pad_obj, args.deadzone, args.trigger_threshold,
+                                pad_binds))
+                    except Exception as e:
+                        print(f"[-] slot {slot} source read failed ({e}); skipping it.")
+                buttons, lx, ly, rx, ry, aux = merge_inputs(*states)
                 try:
-                    pad_state = read_controller(
-                        controller, args.deadzone, args.trigger_threshold)
-                except Exception as e:
-                    print(f"[-] Controller read failed ({e}); ignoring controller.")
-            buttons, lx, ly, rx, ry, aux = merge_inputs(read_keyboard(), pad_state)
+                    ser.write(make_serial_packet(slot, buttons, lx, ly, rx, ry,
+                                                 aux, enabled_mask))
+                    total_sent += 1
+                except Exception:
+                    time.sleep(0.01)
+                    break
 
-            # 3. Transmit packet over USB serial with write timeout protection
-            try:
-                packet = make_serial_packet(args.target, buttons, lx, ly, rx, ry, aux)
-                ser.write(packet)
-                # No flush() here. pyserial's Windows flush() is an unbounded
-                # busy-wait on the OS output queue (no timeout, write_timeout
-                # does not apply), which adds latency and jitter to every poll
-                # and can block outright if the device stalls.
-                total_sent += 1
-            except Exception:
-                time.sleep(0.01)
+            # (Packets for every enabled slot were already sent above. No
+            # flush() anywhere: pyserial's Windows flush() is an unbounded
+            # busy-wait on the OS output queue, with no timeout, which adds
+            # latency and jitter and can block outright if the device stalls.)
 
-            # 4. Drain CDC telemetry and show it
+            # 2. Drain CDC telemetry and show it
             try:
                 while ser.in_waiting > 0:
                     line = ser.readline().decode('utf-8', errors='ignore').strip()

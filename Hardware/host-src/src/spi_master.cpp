@@ -3,7 +3,24 @@
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
 
-const uint CS_PINS[4] = {20, 21, 22, 26};
+const uint MISO_PINS[4] = {0, 4, 16, 20};    // the only SPI0-RX-capable pins
+const uint CS_PINS[4]   = {21, 22, 26, 27};
+
+// Only one pin may be the live SPI0 RX at a time. Park the others as plain
+// inputs so a deselected slave driving its (non-tri-stating) MISO cannot feed
+// the peripheral. Cached because this runs on every transaction.
+static int active_miso = -1;
+
+static void select_miso(uint slave_index) {
+    if ((int)slave_index == active_miso) return;
+    for (size_t i = 0; i < 4; i++) {
+        if (i == slave_index) continue;
+        gpio_set_function(MISO_PINS[i], GPIO_FUNC_SIO);
+        gpio_set_dir(MISO_PINS[i], GPIO_IN);
+    }
+    gpio_set_function(MISO_PINS[slave_index], GPIO_FUNC_SPI);
+    active_miso = (int)slave_index;
+}
 
 // unreset_block_wait() polls resets_hw->reset_done with no timeout at all.
 // spi_master_init() runs this on every RECOVER event, not just at boot, so a
@@ -30,18 +47,26 @@ void spi_master_init() {
     spi_init(SPI_PORT, 4 * 1000 * 1000);
     spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);  // Mode 1
 
-    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
-    gpio_pull_up(PIN_MISO);
 
-    // All CS pins high
-    const uint all_cs[] = {17, 20, 21, 22, 26};
-    for (size_t i = 0; i < 5; i++) {
-        gpio_init(all_cs[i]);
-        gpio_set_dir(all_cs[i], GPIO_OUT);
-        gpio_put(all_cs[i], 1);
-        gpio_pull_up(all_cs[i]);
+    // Park every MISO as a pulled-up input; select_miso() hands the SPI
+    // function to whichever one is being talked to. The pull-up keeps an
+    // unused line from floating into the receiver.
+    for (size_t i = 0; i < 4; i++) {
+        gpio_init(MISO_PINS[i]);
+        gpio_set_dir(MISO_PINS[i], GPIO_IN);
+        gpio_pull_up(MISO_PINS[i]);
+    }
+    active_miso = -1;
+    select_miso(0);
+
+    // All CS pins idle high
+    for (size_t i = 0; i < 4; i++) {
+        gpio_init(CS_PINS[i]);
+        gpio_set_dir(CS_PINS[i], GPIO_OUT);
+        gpio_put(CS_PINS[i], 1);
+        gpio_pull_up(CS_PINS[i]);
     }
 }
 
@@ -102,15 +127,14 @@ bool spi_master_transceive_packet(uint8_t slave_index,
 {
     if (slave_index >= 4) return false;
 
+    // Point SPI0's receiver at this slave's dedicated MISO line before any
+    // clocking, then drain anything the previous line left behind.
+    select_miso(slave_index);
+
     // Drain stale RX (bounded - see comment above drain_stale_rx)
     drain_stale_rx(200);
 
-    // Assert CS (only GP20 for slave 0)
-    if (slave_index == 0) {
-        gpio_put(20, 0);
-    } else {
-        gpio_put(CS_PINS[slave_index], 0);
-    }
+    gpio_put(CS_PINS[slave_index], 0);
     // busy_wait_us(), NOT sleep_us(). sleep_us() routes through sleep_until(),
     // which parks the core in __wfe() waiting for a timer alarm to fire an SEV.
     // If that alarm event is lost the core never wakes: it stops servicing USB,
@@ -130,11 +154,7 @@ bool spi_master_transceive_packet(uint8_t slave_index,
 
     busy_wait_us(30);   // see comment above - must not be sleep_us()
 
-    if (slave_index == 0) {
-        gpio_put(20, 1);
-    } else {
-        gpio_put(CS_PINS[slave_index], 1);
-    }
+    gpio_put(CS_PINS[slave_index], 1);
     busy_wait_us(50);   // see comment above - must not be sleep_us()
 
     if (!xfer_ok) return false;

@@ -18,6 +18,16 @@
 #define SPI_AUX_MASK_HOME    (1 << 6)
 #define SPI_AUX_MASK_CAPTURE (1 << 7)
 
+// Bits 2..5 carry which player slots the host currently has enabled, one bit
+// per slot. The enabled set is arbitrary - "only slots 1 and 3" is perfectly
+// valid - so the master cannot infer it from which targets happen to have
+// been addressed. Riding it in every packet (rather than sending a one-off
+// control message) means the master re-syncs automatically after any dropped
+// packet, and a slot can be enabled or disabled at any time.
+#define SPI_ENABLED_SHIFT    2
+#define SPI_ENABLED_MASK     0x3C
+#define SPI_ENABLED_SLOTS(flags) (((flags) & SPI_ENABLED_MASK) >> SPI_ENABLED_SHIFT)
+
 #pragma pack(push, 1)
 // Unified 9-Byte Master -> Target SPI Packet Structure.
 // Carries the complete Switch Pro Controller state every poll: 18 buttons (16
