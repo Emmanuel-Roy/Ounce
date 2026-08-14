@@ -409,6 +409,50 @@ AXIS_ACTIONS = {
 }
 ALL_ACTIONS = list(BUTTON_ACTIONS) + list(AUX_ACTIONS) + list(AXIS_ACTIONS)
 
+# Every Switch Pro input, in a sensible order for a remapping screen, with the
+# names a player recognises rather than the internal B1/S2 codes.
+ACTION_DISPLAY = [
+    ("LY-", "Left Stick Up"),      ("LY+", "Left Stick Down"),
+    ("LX-", "Left Stick Left"),    ("LX+", "Left Stick Right"),
+    ("RY-", "Right Stick Up"),     ("RY+", "Right Stick Down"),
+    ("RX-", "Right Stick Left"),   ("RX+", "Right Stick Right"),
+    ("UP", "D-Pad Up"),            ("DOWN", "D-Pad Down"),
+    ("LEFT", "D-Pad Left"),        ("RIGHT", "D-Pad Right"),
+    ("B4", "X  (top)"),            ("B3", "Y  (left)"),
+    ("B1", "B  (bottom)"),         ("B2", "A  (right)"),
+    ("L1", "L"),                   ("R1", "R"),
+    ("L2", "ZL"),                  ("R2", "ZR"),
+    ("L3", "L3  (left stick click)"),
+    ("R3", "R3  (right stick click)"),
+    ("S2", "+  (Start)"),          ("S1", "-  (Select)"),
+    ("HOME", "Home"),              ("CAPTURE", "Capture"),
+]
+
+
+def pygame_key_to_name(pg, key):
+    """pygame key constant -> a name from VK_NAMES, or None if unusable.
+
+    pygame and the Win32 key table disagree on naming, so this normalises
+    between them; anything that has no Win32 equivalent is rejected rather than
+    silently bound to nothing."""
+    raw = pg.key.name(key)
+    if not raw:
+        return None
+    n = raw.strip().upper()
+    special = {
+        "RETURN": "ENTER", "ESCAPE": "ESC", "PAGE UP": "PAGEUP",
+        "PAGE DOWN": "PAGEDOWN", "LEFT SHIFT": "LSHIFT", "RIGHT SHIFT": "RSHIFT",
+        "LEFT CTRL": "LCTRL", "RIGHT CTRL": "RCTRL", "LEFT ALT": "ALT",
+        "RIGHT ALT": "ALT", "LEFT META": "CTRL", "-": "MINUS", "=": "EQUALS",
+        ",": "COMMA", ".": "PERIOD", "/": "SLASH", ";": "SEMICOLON",
+        "'": "QUOTE", "[": "LBRACKET", "]": "RBRACKET", "\\": "BACKSLASH",
+        "`": "GRAVE",
+    }
+    n = special.get(n, n)
+    if n.startswith("[") and n.endswith("]"):      # numpad, e.g. "[7]"
+        n = "NUM" + n[1:-1]
+    return n if n in VK_NAMES else None
+
 
 def _build_vk_names():
     t = {}
@@ -741,8 +785,10 @@ class Toolbar:
         self.hdr = False
         self.pads = []               # [(idx, name)] real controllers
         self.slots = {}              # slot -> 'keyboard' | pad index | None
-        self.open_menu = None        # None | 'device' | 'mode' | 'hdr' | 'slot0'..
+        self.open_menu = None        # None | 'device' | 'mode' | 'hdr' | 'slot0'.. | 'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
+        self.keymap = None           # live dict of action -> key name
+        self.capture_action = None   # action awaiting a keypress, if any
 
     def set_sources(self, devices, modes, device, mode):
         self.devices = devices
@@ -821,11 +867,16 @@ class Toolbar:
             # than an abbreviation - this is the screen people come here to read.
             items += [("go", f"Controller {s + 1} :  {self._slot_label(s, short=False)}",
                        f"slot{s}") for s in range(NUM_SLOTS)]
+            items += [(None, "-- keyboard --", None),
+                      ("go", "Remap keyboard controls...", "keys")]
         elif self.open_menu == "device":
             items = [("device", d, d) for d in self.devices]
         elif self.open_menu == "hdr":
             items = [("hdr", "HDR on  (pass through, no tone mapping)", True),
                      ("hdr", "HDR off (tone map to SDR)", False)]
+        elif self.open_menu == "keys":
+            self._draw_keymap(surface, f)
+            return
         elif self.open_menu and self.open_menu.startswith("slot"):
             slot = int(self.open_menu[4:])
             items = [(None, f"-- Controller {slot + 1}  (now: "
@@ -878,6 +929,75 @@ class Toolbar:
                 self._hit.append((rect, kind, value))
             y += rowh
 
+    def _draw_keymap(self, surface, f):
+        """Two-column list of every Switch Pro input and the key bound to it.
+
+        Two columns because there are 26 inputs - a single column would run off
+        the bottom of the window and the lower half would be unreachable."""
+        km = self.keymap or {}
+        W, H = surface.get_width(), surface.get_height()
+        x0, y0 = 6, TOOLBAR_H
+        _pg.draw.rect(surface, (24, 24, 30), (x0, y0, W - 12, H - y0 - 6))
+        _pg.draw.rect(surface, (70, 70, 84), (x0, y0, W - 12, H - y0 - 6), 1)
+
+        head = ("Click an input, then press a key.  Esc cancels."
+                if not self.capture_action else
+                f"Press a key for  {dict(ACTION_DISPLAY).get(self.capture_action, self.capture_action)}"
+                "   (Esc to cancel)")
+        surface.blit(f.render(head, True,
+                              (255, 210, 120) if self.capture_action else (150, 150, 168)),
+                     (x0 + 10, y0 + 6))
+
+        rowh = 20
+        top = y0 + 28
+        per_col = max(1, (H - top - 34) // rowh)
+        colw = (W - 24) // 2
+
+        for i, (action, label) in enumerate(ACTION_DISPLAY):
+            col, row = divmod(i, per_col)
+            if col > 1:
+                break
+            rx = x0 + 6 + col * colw
+            ry = top + row * rowh
+            rect = _pg.Rect(rx, ry, colw - 8, rowh - 2)
+            capturing = self.capture_action == action
+            if capturing:
+                _pg.draw.rect(surface, (90, 70, 30), rect, border_radius=3)
+            surface.blit(f.render(label, True, (225, 225, 235)), (rx + 6, ry + 2))
+            key = km.get(action, "--")
+            kt = f.render(str(key), True, (140, 220, 160) if key != "--" else (110, 110, 128))
+            surface.blit(kt, (rx + colw - 16 - kt.get_width(), ry + 2))
+            self._hit.append((rect, "bindkey", action))
+
+        back = _pg.Rect(x0 + 6, H - 30, 90, 22)
+        _pg.draw.rect(surface, (40, 40, 50), back, border_radius=4)
+        surface.blit(f.render("< back", True, (225, 225, 235)), (back.x + 10, back.y + 3))
+        self._hit.append((back, "go", "root"))
+
+        rst = _pg.Rect(x0 + 104, H - 30, 110, 22)
+        _pg.draw.rect(surface, (40, 40, 50), rst, border_radius=4)
+        surface.blit(f.render("reset all", True, (225, 225, 235)), (rst.x + 10, rst.y + 3))
+        self._hit.append((rst, "keyreset", None))
+
+    def bind_key(self, pg, key):
+        """Bind the pending input to `key`. Returns True if the map changed."""
+        if not self.capture_action or self.keymap is None:
+            return False
+        if key == pg.K_ESCAPE:
+            self.capture_action = None
+            return False
+        name = pygame_key_to_name(pg, key)
+        if not name:
+            return False
+        # A key can only drive one input, so clear any previous owner rather
+        # than leaving two inputs firing from the same key.
+        for act, k in list(self.keymap.items()):
+            if k == name and act != self.capture_action:
+                del self.keymap[act]
+        self.keymap[self.capture_action] = name
+        self.capture_action = None
+        return True
+
     def click(self, pos):
         """Resolve a click. Returns ('device'|'mode', value) if something was
         chosen, else None."""
@@ -888,7 +1008,17 @@ class Toolbar:
                     return None
                 if kind == "go":
                     self.open_menu = value       # navigate within the dropdown
+                    self.capture_action = None
                     return None
+                if kind == "bindkey":
+                    self.capture_action = value  # next keypress binds this input
+                    return None
+                if kind == "keyreset":
+                    if self.keymap is not None:
+                        self.keymap.clear()
+                        self.keymap.update(DEFAULT_KEYBOARD_BINDINGS)
+                    self.capture_action = None
+                    return ("keymap", None)
                 self.open_menu = None
                 return (kind, value)
         self.open_menu = None                    # click outside closes it
@@ -1501,7 +1631,7 @@ def _draw_status(line, extra=()):
         pass
 
 
-def pump_window(vlc_active=False, on_resize=None, on_click=None):
+def pump_window(vlc_active=False, on_resize=None, on_click=None, on_key=None):
     """Service the window's message queue so Windows does not mark it as
     'not responding', which would also drop it out of the foreground.
 
@@ -1527,6 +1657,10 @@ def pump_window(vlc_active=False, on_resize=None, on_click=None):
                                                    _pg.RESIZABLE)
             if e.type == _pg.MOUSEBUTTONDOWN and e.button == 1 and on_click:
                 on_click(e.pos)
+            # Key capture wins over the shortcuts below, so binding F11 or Esc
+            # to a controller input is possible instead of being swallowed.
+            if e.type == _pg.KEYDOWN and on_key and on_key(e.key):
+                continue
             if e.type == _pg.KEYDOWN and e.key in (_pg.K_F11,):
                 toggle_borderless_fullscreen()
                 if on_resize:
@@ -1888,6 +2022,11 @@ def main():
             print(f"  [{i}] {name}{tag}")
         sys.exit(0)
 
+    # One keyboard binding map shared by every slot using the keyboard, held by
+    # reference so a remap in the toolbar takes effect immediately everywhere
+    # rather than only on slots assigned afterwards.
+    live_keymap = dict(DEFAULT_KEYBOARD_BINDINGS)
+
     # slot_sources[slot] = list of (kind, controller_or_None, label)
     slot_sources = {}
     opened_pads = {}          # controller index -> (Controller, name)
@@ -1930,7 +2069,7 @@ def main():
                               or os.environ.get("SteamGameId")):
         # With a window there is a toolbar to manage slots from, so do not
         # block on a console prompt. Start with Controller 1 on the keyboard.
-        slot_sources[0] = [("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard")]
+        slot_sources[0] = [("keyboard", live_keymap, "keyboard")]
 
     elif not args.assign and not args.no_interactive and sys.stdin.isatty():
         # Run bare from a terminal: ask which input drives each virtual
@@ -1943,7 +2082,7 @@ def main():
             for kind, ref in entries:
                 if kind == "keyboard":
                     slot_sources.setdefault(slot, []).append(
-                        ("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard"))
+                        ("keyboard", live_keymap, "keyboard"))
                 else:
                     idx = resolve_pad(ref)
                     if idx is None:
@@ -1963,7 +2102,7 @@ def main():
             if kind == "keyboard":
                 for slot in slots:
                     slot_sources.setdefault(slot, []).append(
-                        ("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard (default map)"))
+                        ("keyboard", live_keymap, "keyboard"))
                 continue
             if ref is None:
                 c = open_controller(None)      # auto-pick, skipping our own targets
@@ -1996,7 +2135,7 @@ def main():
             else:
                 legacy.append(("pad", (c, dict(DEFAULT_PAD_BUTTONS)), "controller"))
         if args.input != "gamepad":
-            legacy.append(("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard (default map)"))
+            legacy.append(("keyboard", live_keymap, "keyboard"))
         slot_sources[args.target] = legacy
 
     # The enabled set is whatever was assigned - it need not be contiguous, so
@@ -2168,12 +2307,121 @@ def main():
     # show the truth from the first frame rather than after the first click.
     if _window is not None:
         toolbar.set_inputs(list_real_pads(), _slot_state())
+        toolbar.keymap = live_keymap      # edited in place by the remap screen
 
     total_sent = 0
     start_time = time.monotonic()
     last_paint = 0.0
     refit_until = 0.0      # keep re-fitting VLC until this time (see _refit)
     menu_was_open = False  # tracks video-child visibility vs the dropdown
+    def _refit():
+        # Snap back to the source aspect, then tell VLC to fill the
+        # new client area, so a resize leaves neither bars nor a
+        # squished picture.
+        #
+        # VLC applies a geometry change asynchronously, so a single
+        # fit() right after the resize lands before VLC has caught
+        # up and briefly shows bars. Keep re-applying it for a short
+        # while so the transition stays clean.
+        nonlocal refit_until
+        snap_window_to_aspect(vlc_aspect,
+                              0 if is_fullscreen() else TOOLBAR_H)
+        layout_video_child(show_toolbar=not is_fullscreen())
+        if vlc_preview:
+            vlc_preview.fit(video_child_size(not is_fullscreen()))
+        refit_until = time.monotonic() + 0.6
+
+    def _swap_vlc(make_player):
+        """Replace the VLC player, pumping messages during teardown.
+
+        The pump is load-bearing: stop() cannot finish unless the
+        window's message loop keeps running (see stop_async)."""
+        nonlocal vlc_preview
+        if vlc_preview is not None:
+            done = vlc_preview.stop_async()
+            deadline = time.monotonic() + 4.0
+            while not done.is_set() and time.monotonic() < deadline:
+                pump_window(vlc_active=True)
+                time.sleep(0.01)
+        vlc_preview = make_player()
+        if vlc_preview.error:
+            print(f"[!] {vlc_preview.error}")
+        _refit()
+
+    def _on_click(pos):
+        """Toolbar click: switch input device or capture mode.
+
+        Both require tearing down and restarting VLC - DirectShow
+        negotiates the device and mode when the stream opens, so
+        they cannot be changed on a live one."""
+        nonlocal vlc_preview, vlc_aspect, refit_until
+        if is_fullscreen() or vlc_preview is None:
+            return
+        picked = toolbar.click(pos)
+        if not picked:
+            return
+        kind, value = picked
+
+        if kind == "slot":
+            # Reassign a player slot live. Rebuilding slot_sources
+            # also changes enabled_mask, which is what tells the
+            # master which targets to poll at all.
+            nonlocal enabled_mask, active_slots
+            slot, src = value
+            if src is None:
+                slot_sources.pop(slot, None)
+            elif src == "keyboard":
+                slot_sources[slot] = [("keyboard", live_keymap,
+                                       "keyboard")]
+            else:
+                c, name = open_pad_once(src)
+                slot_sources[slot] = [("pad", (c, dict(DEFAULT_PAD_BUTTONS)),
+                                       f"[{src}] {name}")]
+            active_slots = sorted(slot_sources)
+            enabled_mask = 0
+            for s in active_slots:
+                enabled_mask |= (1 << s)
+            toolbar.set_inputs(toolbar.pads, _slot_state())
+            print(f"[+] Controller {slot + 1} -> "
+                  f"{'disabled' if src is None else src}")
+            return
+
+        if kind == "hdr":
+            toolbar.hdr = value
+            print(f"[+] HDR {'on (passthrough)' if value else 'off (tone mapped)'}")
+            aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+            _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
+                                         toolbar.mode, hdr=value))
+            return
+
+        new_dev = value if kind == "device" else toolbar.device
+        new_modes = list_dshow_modes(new_dev) if kind == "device" else None
+        new_mode = (pick_best_mode(new_modes) if kind == "device" else value)
+
+        print(f"[+] Switching {kind} -> "
+              f"{value if kind == 'device' else mode_label(value)}")
+        aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+        _swap_vlc(lambda: VlcPreview(_video_child, new_dev, aud, new_mode,
+                                     hdr=toolbar.hdr))
+        toolbar.set_sources(toolbar.devices,
+                            new_modes if new_modes is not None
+                            else (toolbar.modes_comp + toolbar.modes_raw),
+                            new_dev, new_mode)
+        if new_mode:
+            vlc_aspect = new_mode[0] / new_mode[1]
+        _refit()
+
+    def _on_key(key):
+        """Feed keypresses to the remap screen while it is waiting.
+        Returns True if the key was consumed."""
+        if toolbar.capture_action:
+            if toolbar.bind_key(_pg, key):
+                print("[+] bound %s -> %s" %
+                      (toolbar.capture_action or "input", _pg.key.name(key)))
+            return True
+        return False
+
+
 
     try:
         while True:
@@ -2206,6 +2454,22 @@ def main():
             # 1. Build and send one packet per enabled slot. Each slot merges
             # all of its own sources, so a slot can be driven by a keyboard and
             # a pad at once, and different slots by different devices.
+            # While a key is being captured for remapping, do not also send that
+            # keypress to the controllers - you would be pressing buttons in
+            # game while rebinding them.
+            if toolbar.capture_action:
+                time.sleep(0.005)
+                if _window is not None and (time.monotonic() - last_paint) >= 0.033:
+                    last_paint = time.monotonic()
+                    if not pump_window(vlc_active=(vlc_preview is not None),
+                                       on_click=_on_click,
+                                       on_key=_on_key):
+                        break
+                    _window.fill((16, 16, 20))
+                    toolbar.draw(_window)
+                    _pg.display.flip()
+                continue
+
             for slot in active_slots:
                 states = []
                 for kind, obj, _ in slot_sources[slot]:
@@ -2238,107 +2502,9 @@ def main():
             # expensive than building a packet and must never pace it.
             if _window is not None and (time.monotonic() - last_paint) >= 0.033:
                 last_paint = time.monotonic()
-                def _refit():
-                    # Snap back to the source aspect, then tell VLC to fill the
-                    # new client area, so a resize leaves neither bars nor a
-                    # squished picture.
-                    #
-                    # VLC applies a geometry change asynchronously, so a single
-                    # fit() right after the resize lands before VLC has caught
-                    # up and briefly shows bars. Keep re-applying it for a short
-                    # while so the transition stays clean.
-                    nonlocal refit_until
-                    snap_window_to_aspect(vlc_aspect,
-                                          0 if is_fullscreen() else TOOLBAR_H)
-                    layout_video_child(show_toolbar=not is_fullscreen())
-                    if vlc_preview:
-                        vlc_preview.fit(video_child_size(not is_fullscreen()))
-                    refit_until = time.monotonic() + 0.6
-
-                def _swap_vlc(make_player):
-                    """Replace the VLC player, pumping messages during teardown.
-
-                    The pump is load-bearing: stop() cannot finish unless the
-                    window's message loop keeps running (see stop_async)."""
-                    nonlocal vlc_preview
-                    if vlc_preview is not None:
-                        done = vlc_preview.stop_async()
-                        deadline = time.monotonic() + 4.0
-                        while not done.is_set() and time.monotonic() < deadline:
-                            pump_window(vlc_active=True)
-                            time.sleep(0.01)
-                    vlc_preview = make_player()
-                    if vlc_preview.error:
-                        print(f"[!] {vlc_preview.error}")
-                    _refit()
-
-                def _on_click(pos):
-                    """Toolbar click: switch input device or capture mode.
-
-                    Both require tearing down and restarting VLC - DirectShow
-                    negotiates the device and mode when the stream opens, so
-                    they cannot be changed on a live one."""
-                    nonlocal vlc_preview, vlc_aspect, refit_until
-                    if is_fullscreen() or vlc_preview is None:
-                        return
-                    picked = toolbar.click(pos)
-                    if not picked:
-                        return
-                    kind, value = picked
-
-                    if kind == "slot":
-                        # Reassign a player slot live. Rebuilding slot_sources
-                        # also changes enabled_mask, which is what tells the
-                        # master which targets to poll at all.
-                        nonlocal enabled_mask, active_slots
-                        slot, src = value
-                        if src is None:
-                            slot_sources.pop(slot, None)
-                        elif src == "keyboard":
-                            slot_sources[slot] = [("keyboard",
-                                                   dict(DEFAULT_KEYBOARD_BINDINGS),
-                                                   "keyboard")]
-                        else:
-                            c, name = open_pad_once(src)
-                            slot_sources[slot] = [("pad", (c, dict(DEFAULT_PAD_BUTTONS)),
-                                                   f"[{src}] {name}")]
-                        active_slots = sorted(slot_sources)
-                        enabled_mask = 0
-                        for s in active_slots:
-                            enabled_mask |= (1 << s)
-                        toolbar.set_inputs(toolbar.pads, _slot_state())
-                        print(f"[+] Controller {slot + 1} -> "
-                              f"{'disabled' if src is None else src}")
-                        return
-
-                    if kind == "hdr":
-                        toolbar.hdr = value
-                        print(f"[+] HDR {'on (passthrough)' if value else 'off (tone mapped)'}")
-                        aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-                        _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
-                                                     toolbar.mode, hdr=value))
-                        return
-
-                    new_dev = value if kind == "device" else toolbar.device
-                    new_modes = list_dshow_modes(new_dev) if kind == "device" else None
-                    new_mode = (pick_best_mode(new_modes) if kind == "device" else value)
-
-                    print(f"[+] Switching {kind} -> "
-                          f"{value if kind == 'device' else mode_label(value)}")
-                    aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-                    _swap_vlc(lambda: VlcPreview(_video_child, new_dev, aud, new_mode,
-                                                 hdr=toolbar.hdr))
-                    toolbar.set_sources(toolbar.devices,
-                                        new_modes if new_modes is not None
-                                        else (toolbar.modes_comp + toolbar.modes_raw),
-                                        new_dev, new_mode)
-                    if new_mode:
-                        vlc_aspect = new_mode[0] / new_mode[1]
-                    _refit()
-
                 if not pump_window(vlc_active=(vlc_preview is not None),
                                    on_resize=(_refit if vlc_preview else None),
-                                   on_click=_on_click):
+                                   on_click=_on_click, on_key=_on_key):
                     print("\n[+] Window closed - exiting.")
                     break
                 if vlc_preview is not None:
