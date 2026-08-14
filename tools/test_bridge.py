@@ -686,6 +686,132 @@ def pick_capture(ref, names, keywords=("elgato", "capture", "hdmi")):
     return None
 
 
+RAW_FORMATS = ("nv12", "yuv420p", "yuyv422", "rgb24", "bgr24", "uyvy422")
+
+
+def mode_label(m):
+    w, h, fps, fmt = m
+    return f"{w}x{h} @{fps} {fmt}"
+
+
+def group_modes(modes):
+    """Split modes into (raw, compressed), each sorted best-first.
+
+    The distinction is not cosmetic: raw formats are uncompressed and so are
+    bandwidth-limited over USB (this card caps at 4K30), while compressed ones
+    (mjpeg) carry 4K60, 1440p144 and 1080p240. Someone picking a mode needs to
+    see which side of that line they are on."""
+    raw = [m for m in modes if m[3].lower() in RAW_FORMATS]
+    comp = [m for m in modes if m[3].lower() not in RAW_FORMATS]
+    key = lambda m: (m[0] * m[1], m[2])
+    return sorted(raw, key=key, reverse=True), sorted(comp, key=key, reverse=True)
+
+
+class Toolbar:
+    """Top strip: pick the capture device and the capture mode.
+
+    Deliberately drawn by pygame rather than being native controls - it lives
+    in the same window as the video and has to appear and disappear with
+    fullscreen, which is far simpler to do by just not drawing it."""
+
+    def __init__(self):
+        self.devices = []
+        self.modes_raw = []
+        self.modes_comp = []
+        self.device = None
+        self.mode = None
+        self.open_menu = None        # None | 'device' | 'mode'
+        self._hit = []               # [(rect, kind, value)] rebuilt each draw
+
+    def set_sources(self, devices, modes, device, mode):
+        self.devices = devices
+        self.modes_raw, self.modes_comp = group_modes(modes)
+        self.device = device
+        self.mode = mode
+
+    def _font(self, size):
+        return _pg.font.SysFont("segoeui", size) or _pg.font.SysFont("consolas", size)
+
+    def draw(self, surface):
+        """Draw the strip (and any open menu). Returns nothing; records hit
+        rectangles so clicks can be resolved without re-deriving layout."""
+        self._hit = []
+        w = surface.get_width()
+        f = self._font(14)
+
+        _pg.draw.rect(surface, (28, 28, 34), (0, 0, w, TOOLBAR_H))
+        _pg.draw.line(surface, (60, 60, 72), (0, TOOLBAR_H - 1), (w, TOOLBAR_H - 1))
+
+        x = 10
+        for kind, label in (("device", self.device or "no device"),
+                            ("mode", mode_label(self.mode) if self.mode else "default mode")):
+            cap = ("Input: " if kind == "device" else "Mode: ") + str(label)
+            txt = f.render(cap + "  v", True, (225, 225, 235))
+            rect = _pg.Rect(x, 6, txt.get_width() + 16, TOOLBAR_H - 12)
+            hot = self.open_menu == kind
+            _pg.draw.rect(surface, (52, 52, 64) if hot else (40, 40, 50), rect, border_radius=4)
+            surface.blit(txt, (rect.x + 8, rect.y + 3))
+            self._hit.append((rect, "open", kind))
+            x += rect.width + 10
+
+        hint = f.render("F11 fullscreen", True, (120, 120, 138))
+        surface.blit(hint, (w - hint.get_width() - 10, 9))
+
+        if self.open_menu:
+            self._draw_menu(surface, f)
+
+    def _draw_menu(self, surface, f):
+        items = []
+        if self.open_menu == "device":
+            items = [("device", d, d) for d in self.devices]
+        else:
+            # Grouped, because raw vs compressed is what decides whether 4K60
+            # is even on the table.
+            if self.modes_comp:
+                items.append((None, "-- compressed (highest modes) --", None))
+                items += [("mode", mode_label(m), m) for m in self.modes_comp]
+            if self.modes_raw:
+                items.append((None, "-- raw (uncompressed) --", None))
+                items += [("mode", mode_label(m), m) for m in self.modes_raw]
+
+        rowh, pad = 22, 6
+        wmenu = max([f.size(t)[0] for _, t, _ in items] or [200]) + 28
+        hmenu = rowh * len(items) + pad * 2
+        mx, my = 10, TOOLBAR_H
+        hmenu = min(hmenu, surface.get_height() - my - 10)
+
+        _pg.draw.rect(surface, (24, 24, 30), (mx, my, wmenu, hmenu))
+        _pg.draw.rect(surface, (70, 70, 84), (mx, my, wmenu, hmenu), 1)
+
+        y = my + pad
+        for kind, text, value in items:
+            if y + rowh > my + hmenu:
+                break
+            if kind is None:
+                surface.blit(f.render(text, True, (130, 130, 150)), (mx + 8, y + 3))
+            else:
+                sel = (value == self.device) if kind == "device" else (value == self.mode)
+                rect = _pg.Rect(mx + 2, y, wmenu - 4, rowh)
+                if sel:
+                    _pg.draw.rect(surface, (48, 74, 58), rect, border_radius=3)
+                surface.blit(f.render(text, True, (235, 235, 245)), (mx + 8, y + 3))
+                self._hit.append((rect, kind, value))
+            y += rowh
+
+    def click(self, pos):
+        """Resolve a click. Returns ('device'|'mode', value) if something was
+        chosen, else None."""
+        for rect, kind, value in self._hit:
+            if rect.collidepoint(pos):
+                if kind == "open":
+                    self.open_menu = None if self.open_menu == value else value
+                    return None
+                self.open_menu = None
+                return (kind, value)
+        self.open_menu = None
+        return None
+
+
 class VlcPreview:
     """Capture card rendered by VLC directly into the pygame window.
 
@@ -977,6 +1103,55 @@ class CaptureAudio:
 _fullscreen = False
 _saved_window = None       # (style, exstyle, x, y, w, h) to restore on exit
 
+TOOLBAR_H = 34             # height of the toolbar strip, in pixels
+_video_child = None        # HWND VLC renders into (a child of the pygame window)
+
+
+def create_video_child(parent_hwnd):
+    """A child window for VLC to render into.
+
+    VLC draws directly into whatever HWND it is given, taking over every pixel
+    of it - so pointing it at the pygame window leaves nowhere to draw a
+    toolbar. Giving it a child window instead lets us position the video below
+    a strip that pygame still owns. Uses the built-in STATIC class so no window
+    class has to be registered."""
+    global _video_child
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        WS_CHILD, WS_VISIBLE, WS_CLIPSIBLINGS = 0x40000000, 0x10000000, 0x04000000
+        _video_child = u.CreateWindowExW(
+            0, "STATIC", None,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            0, TOOLBAR_H, 100, 100,
+            parent_hwnd, None, None, None)
+        return _video_child
+    except Exception:
+        _video_child = None
+        return None
+
+
+def layout_video_child(show_toolbar):
+    """Position the video child under the toolbar, or over the whole window."""
+    if not _video_child or _window is None or _pg is None:
+        return
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        cw, ch = window_client_size() or _window.get_size()
+        top = TOOLBAR_H if show_toolbar else 0
+        SWP_NOZORDER, SWP_NOACTIVATE = 0x0004, 0x0010
+        u.SetWindowPos(_video_child, 0, 0, top, cw, max(1, ch - top),
+                       SWP_NOZORDER | SWP_NOACTIVATE)
+    except Exception:
+        pass
+
+
+def video_child_size(show_toolbar):
+    cw, ch = window_client_size() or (WINDOW_W, WINDOW_H)
+    top = TOOLBAR_H if show_toolbar else 0
+    return (cw, max(1, ch - top))
+
 
 def is_fullscreen():
     return _fullscreen
@@ -1173,7 +1348,7 @@ def _draw_status(line, extra=()):
         pass
 
 
-def pump_window(vlc_active=False, on_resize=None):
+def pump_window(vlc_active=False, on_resize=None, on_click=None):
     """Service the window's message queue so Windows does not mark it as
     'not responding', which would also drop it out of the foreground.
 
@@ -1197,6 +1372,8 @@ def pump_window(vlc_active=False, on_resize=None):
                 else:
                     _window = _pg.display.set_mode((max(320, e.w), max(180, e.h)),
                                                    _pg.RESIZABLE)
+            if e.type == _pg.MOUSEBUTTONDOWN and e.button == 1 and on_click:
+                on_click(e.pos)
             if e.type == _pg.KEYDOWN and e.key in (_pg.K_F11,):
                 toggle_borderless_fullscreen()
                 if on_resize:
@@ -1719,6 +1896,7 @@ def main():
     # as well put the game on it.
     capture = capture_audio = vlc_preview = None
     vlc_aspect = None
+    toolbar = Toolbar()
     # Note this can only ever be the CAPTURE stream. The card's HDMI
     # passthrough is a hardware path from the card to a display and never
     # reaches the PC, so it cannot be drawn here - passthrough is the better
@@ -1739,6 +1917,11 @@ def main():
             except Exception:
                 pass
             if hwnd:
+                # VLC renders into a child window so the toolbar strip above it
+                # stays ours to draw on.
+                child = create_video_child(hwnd)
+                if child:
+                    hwnd = child
                 mode = pick_best_mode(list_dshow_modes(vname), args.capture_mode)
                 print(f"[+] Capture (VLC, GPU): {vname}")
                 if mode:
@@ -1756,16 +1939,15 @@ def main():
                 else:
                     # Keep the window at the source's aspect so the capture
                     # fills it exactly - no letterbox bars, no stretching.
+                    toolbar.set_sources(vids, list_dshow_modes(vname), vname, mode)
                     if mode and mode[0] and mode[1]:
                         vlc_aspect = mode[0] / mode[1]
-                        snap_window_to_aspect(vlc_aspect)
                         if args.fullscreen:
                             toggle_borderless_fullscreen(True)
-                        cs = window_client_size()
-                        vlc_preview.fit(cs)
-                        print(f"    client {cs[0]}x{cs[1]} filled edge to edge"
-                              f"{' (borderless fullscreen)' if is_fullscreen() else ''}")
+                        layout_video_child(show_toolbar=not is_fullscreen())
+                        vlc_preview.fit(video_child_size(not is_fullscreen()))
                         print("    F11 = borderless fullscreen, Esc = leave it")
+                        print("    toolbar: pick input device and capture mode")
                     vname = None      # handled; skip the ffmpeg path below
                     aname = None
 
@@ -1872,20 +2054,59 @@ def main():
                     # while so the transition stays clean.
                     nonlocal refit_until
                     snap_window_to_aspect(vlc_aspect)
+                    layout_video_child(show_toolbar=not is_fullscreen())
                     if vlc_preview:
-                        vlc_preview.fit(window_client_size())
+                        vlc_preview.fit(video_child_size(not is_fullscreen()))
                     refit_until = time.monotonic() + 0.6
 
+                def _on_click(pos):
+                    """Toolbar click: switch input device or capture mode.
+
+                    Both require tearing down and restarting VLC - DirectShow
+                    negotiates the device and mode when the stream opens, so
+                    they cannot be changed on a live one."""
+                    nonlocal vlc_preview, vlc_aspect, refit_until
+                    if is_fullscreen() or vlc_preview is None:
+                        return
+                    picked = toolbar.click(pos)
+                    if not picked:
+                        return
+                    kind, value = picked
+                    new_dev = value if kind == "device" else toolbar.device
+                    new_modes = list_dshow_modes(new_dev) if kind == "device" else None
+                    new_mode = (pick_best_mode(new_modes) if kind == "device" else value)
+
+                    print(f"[+] Switching {kind} -> "
+                          f"{value if kind == 'device' else mode_label(value)}")
+                    vlc_preview.stop()
+                    aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+                    vlc_preview = VlcPreview(_video_child, new_dev, aud, new_mode)
+                    if vlc_preview.error:
+                        print(f"[!] {vlc_preview.error}")
+                    toolbar.set_sources(toolbar.devices,
+                                        new_modes if new_modes is not None
+                                        else (toolbar.modes_comp + toolbar.modes_raw),
+                                        new_dev, new_mode)
+                    if new_mode:
+                        vlc_aspect = new_mode[0] / new_mode[1]
+                    _refit()
+
                 if not pump_window(vlc_active=(vlc_preview is not None),
-                                   on_resize=(_refit if vlc_preview else None)):
+                                   on_resize=(_refit if vlc_preview else None),
+                                   on_click=_on_click):
                     print("\n[+] Window closed - exiting.")
                     break
                 if vlc_preview is not None:
-                    # VLC owns the window's pixels; do not draw over it. Keep
-                    # re-fitting briefly after a resize so the async geometry
-                    # change never leaves visible bars mid-transition.
+                    # VLC owns the child window's pixels, but the toolbar strip
+                    # above it is still ours. Hidden in fullscreen, where the
+                    # video child covers the whole window.
                     if time.monotonic() < refit_until:
-                        vlc_preview.fit(window_client_size())
+                        vlc_preview.fit(video_child_size(not is_fullscreen()))
+                    if not is_fullscreen():
+                        toolbar.draw(_window)
+                        _pg.display.update(_pg.Rect(0, 0, _window.get_width(),
+                                                    _window.get_height()
+                                                    if toolbar.open_menu else TOOLBAR_H))
                 elif capture is not None and capture.blit_into(_window):
                     _pg.display.flip()
                     if capture.error:
