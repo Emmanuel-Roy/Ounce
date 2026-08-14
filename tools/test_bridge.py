@@ -739,9 +739,29 @@ class VlcPreview:
             self._player.set_media(media)
             self._player.set_hwnd(hwnd)       # render into the pygame window
             self._player.play()
+            self.fit()
         except Exception as e:
             self.error = f"VLC failed to start ({e})"
             self.stop()
+
+    def fit(self):
+        """Make the picture fit the window without distorting it.
+
+        Embedded VLC otherwise stretches to fill the window, so any window
+        whose shape does not match the source gets a squished image. scale=0
+        means 'fit to the window', and clearing the forced aspect ratio makes
+        it use the source's own - together they letterbox instead of stretch."""
+        try:
+            self._player.video_set_scale(0.0)     # 0 = fit to window
+            self._player.video_set_aspect_ratio(None)   # use the source aspect
+        except Exception:
+            pass
+
+    def source_size(self):
+        try:
+            return self._player.video_get_size(0)
+        except Exception:
+            return (0, 0)
 
     def is_playing(self):
         try:
@@ -949,6 +969,41 @@ class CaptureAudio:
                 pass
 
 
+def snap_window_to_aspect(aspect):
+    """Force the window's client area to `aspect`, keeping its width.
+
+    Resizing via Win32 rather than pygame.display.set_mode() is deliberate:
+    set_mode can recreate the window and invalidate the HWND that VLC is
+    rendering into. This keeps the same window and just changes its size, so
+    the capture keeps filling it exactly instead of being letterboxed or
+    stretched when the shape drifts off 16:9."""
+    if _window is None or _pg is None or not aspect:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        hwnd = _pg.display.get_wm_info().get("window")
+        if not hwnd:
+            return
+        u = ctypes.windll.user32
+        wr, cr = wintypes.RECT(), wintypes.RECT()
+        u.GetWindowRect(hwnd, ctypes.byref(wr))
+        u.GetClientRect(hwnd, ctypes.byref(cr))
+        chrome_w = (wr.right - wr.left) - (cr.right - cr.left)
+        chrome_h = (wr.bottom - wr.top) - (cr.bottom - cr.top)
+
+        client_w = cr.right - cr.left
+        want_client_h = int(round(client_w / aspect))
+        if abs(want_client_h - (cr.bottom - cr.top)) <= 2:
+            return                        # already the right shape
+        SWP_NOMOVE, SWP_NOZORDER = 0x0002, 0x0004
+        u.SetWindowPos(hwnd, 0, 0, 0,
+                       client_w + chrome_w, want_client_h + chrome_h,
+                       SWP_NOMOVE | SWP_NOZORDER)
+    except Exception:
+        pass
+
+
 def set_window_size(w, h):
     global WINDOW_W, WINDOW_H
     WINDOW_W, WINDOW_H = max(320, w), max(180, h)
@@ -1015,7 +1070,7 @@ def _draw_status(line, extra=()):
         pass
 
 
-def pump_window(vlc_active=False):
+def pump_window(vlc_active=False, on_resize=None):
     """Service the window's message queue so Windows does not mark it as
     'not responding', which would also drop it out of the foreground.
 
@@ -1029,9 +1084,16 @@ def pump_window(vlc_active=False):
         for e in _pg.event.get():
             if e.type == _pg.QUIT:
                 return False
-            if e.type == _pg.VIDEORESIZE and not vlc_active:
-                _window = _pg.display.set_mode((max(320, e.w), max(180, e.h)),
-                                               _pg.RESIZABLE)
+            if e.type == _pg.VIDEORESIZE:
+                if vlc_active:
+                    # Do NOT call set_mode here: it can recreate the window and
+                    # invalidate the HWND VLC draws into. VLC follows the
+                    # window itself; it just needs re-fitting to the new shape.
+                    if on_resize:
+                        on_resize()
+                else:
+                    _window = _pg.display.set_mode((max(320, e.w), max(180, e.h)),
+                                                   _pg.RESIZABLE)
             if e.type == _pg.KEYDOWN and e.key == _pg.K_F11 and not vlc_active:
                 # Quick fullscreen toggle for the ffmpeg path.
                 try:
@@ -1548,6 +1610,7 @@ def main():
     # Steam case - the window has to be there for Steam Input anyway, so we may
     # as well put the game on it.
     capture = capture_audio = vlc_preview = None
+    vlc_aspect = None
     # Note this can only ever be the CAPTURE stream. The card's HDMI
     # passthrough is a hardware path from the card to a display and never
     # reaches the PC, so it cannot be drawn here - passthrough is the better
@@ -1583,6 +1646,14 @@ def main():
                     print("    Falling back to the ffmpeg pipe (lower resolution).")
                     vlc_preview = None
                 else:
+                    # Keep the window at the source's aspect so the capture
+                    # fills it exactly - no letterbox bars, no stretching.
+                    if mode and mode[0] and mode[1]:
+                        vlc_aspect = mode[0] / mode[1]
+                        snap_window_to_aspect(vlc_aspect)
+                        vlc_preview.fit()
+                        print(f"    window locked to {mode[0]}/{mode[1]} "
+                              f"({vlc_aspect:.4f}) so the picture fills it")
                     vname = None      # handled; skip the ffmpeg path below
                     aname = None
 
@@ -1677,7 +1748,15 @@ def main():
             # expensive than building a packet and must never pace it.
             if _window is not None and (time.monotonic() - last_paint) >= 0.033:
                 last_paint = time.monotonic()
-                if not pump_window(vlc_active=(vlc_preview is not None)):
+                def _refit():
+                    # Snap back to the source aspect, then let VLC re-fit into
+                    # it, so a drag-resize can never leave the picture squished.
+                    snap_window_to_aspect(vlc_aspect)
+                    if vlc_preview:
+                        vlc_preview.fit()
+
+                if not pump_window(vlc_active=(vlc_preview is not None),
+                                   on_resize=(_refit if vlc_preview else None)):
                     print("\n[+] Window closed - exiting.")
                     break
                 if vlc_preview is not None:
