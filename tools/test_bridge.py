@@ -1234,6 +1234,22 @@ def layout_video_child(show_toolbar):
         pass
 
 
+def show_video_child(visible):
+    """Show or hide the video child window.
+
+    A child window always paints over its parent's client area, so anything
+    pygame draws underneath it - the entire dropdown - is invisible no matter
+    what order we draw in. Hiding the video while a menu is open is what makes
+    the menu visible and clickable at all."""
+    if not _video_child:
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.ShowWindow(_video_child, 5 if visible else 0)  # SW_SHOW/SW_HIDE
+    except Exception:
+        pass
+
+
 def video_child_size(show_toolbar):
     cw, ch = window_client_size() or (WINDOW_W, WINDOW_H)
     top = TOOLBAR_H if show_toolbar else 0
@@ -2111,6 +2127,7 @@ def main():
     start_time = time.monotonic()
     last_paint = 0.0
     refit_until = 0.0      # keep re-fitting VLC until this time (see _refit)
+    menu_was_open = False  # tracks video-child visibility vs the dropdown
 
     try:
         while True:
@@ -2275,10 +2292,20 @@ def main():
                     if time.monotonic() < refit_until:
                         vlc_preview.fit(video_child_size(not is_fullscreen()))
                     if not is_fullscreen():
+                        menu_open = toolbar.open_menu is not None
+                        if menu_open != menu_was_open:
+                            # The video child would cover the dropdown, so it
+                            # steps aside while a menu is up.
+                            show_video_child(not menu_open)
+                            menu_was_open = menu_open
+                            if not menu_open:
+                                _refit()
+                        if menu_open:
+                            _window.fill((16, 16, 20))
                         toolbar.draw(_window)
                         _pg.display.update(_pg.Rect(0, 0, _window.get_width(),
                                                     _window.get_height()
-                                                    if toolbar.open_menu else TOOLBAR_H))
+                                                    if menu_open else TOOLBAR_H))
                 elif capture is not None and capture.blit_into(_window):
                     _pg.display.flip()
                     if capture.error:
