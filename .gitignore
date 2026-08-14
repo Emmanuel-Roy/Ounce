@@ -10,3 +10,6 @@ __pycache__/
 .idea/
 *.user
 *.suo
+
+# Standalone bridge build (~149MB, reproducible via tools/build_exe.bat)
+bin/OunceBridge/

@@ -17,6 +17,36 @@ All host-side tools live in `tools/`.
 | `test_bridge.py` | The bridge. Reads a keyboard and/or physical controllers and drives up to 4 virtual Switch Pro Controllers. |
 | `wiring_test.py` | Verifies the SPI wiring, identifies which physical board is which slot, and maps slots to USB devices. |
 | `bridge.bat` | Launcher for the bridge. Double-click it, or add it to Steam so Steam Input presents a Steam Controller as a normal gamepad. |
+| `build_exe.bat` | Builds `bin/OunceBridge/OunceBridge.exe`, a standalone build that needs no Python. |
+
+### Capture preview
+
+When a window is shown (under Steam, or with `--window`) the capture card is
+drawn into that same window — so the window Steam Input needs focused is also
+the one you watch.
+
+```bash
+python tools/test_bridge.py --window            # 4K60 by default
+python tools/test_bridge.py --list-modes        # what the card offers
+python tools/test_bridge.py --capture-mode 1920x1080@240
+python tools/test_bridge.py --no-preview        # status only
+```
+
+Two things are worth knowing, because both cost real quality if you get them
+wrong:
+
+- **A mode must be requested explicitly.** DirectShow hands out the *first*
+  advertised format, which on this card is 640×480. "Specify nothing" means
+  lowest, not native.
+- **The high modes are only offered as MJPEG.** Raw formats (`nv12`,
+  `yuv420p`) cap at 4K30 because uncompressed 4K60 will not fit over USB;
+  `mjpeg` is what carries 4K60, 1440p144 and 1080p240.
+
+By default VLC renders straight into the window on the GPU, so no video data
+passes through Python and the window size *is* the display resolution
+(`--window-size`). `--video-backend ffmpeg` falls back to piping raw frames,
+which caps out near 1080p. The card's HDMI passthrough is a separate hardware
+path to a display and never reaches the PC, so it cannot be shown here.
 
 ### Driving the controllers
 

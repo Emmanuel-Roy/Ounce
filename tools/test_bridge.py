@@ -2,6 +2,9 @@ import sys
 import time
 import struct
 import argparse
+import re
+import subprocess
+import threading
 import serial
 import serial.tools.list_ports
 import ctypes
@@ -164,11 +167,34 @@ def probe_input(seconds=60.0):
                 for i in range(_pg.joystick.get_count())
                 if _pg.joystick.Joystick(i).get_name().strip().lower()
                 not in OUNCE_SELF_NAMES]
+    import os
+    print("\n--- environment ---")
+    for v in ("SteamAppId", "SteamGameId", "SteamClientLaunch",
+              "SDL_JOYSTICK_HIDAPI_STEAM", "SDL_JOYSTICK_RAWINPUT",
+              "SDL_VIDEODRIVER", "SDL_GAMECONTROLLER_IGNORE_DEVICES",
+              "SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT"):
+        print(f"   {v:42s} = {os.environ.get(v, '(unset)')}")
+    print(f"   launched under Steam                       = "
+          f"{'YES' if os.environ.get('SteamAppId') or os.environ.get('SteamGameId') else 'no'}")
+
+    print("\n--- every joystick SDL can see ---")
+    total = _pg.joystick.get_count()
+    if total == 0:
+        print("   (none at all)")
+    for i in range(total):
+        jj = _pg.joystick.Joystick(i)
+        jj.init()
+        tag = "  <-- Ounce target (ignored as input)" \
+            if jj.get_name().strip().lower() in OUNCE_SELF_NAMES else ""
+        print(f"   [{i}] {jj.get_name()}  axes={jj.get_numaxes()} "
+              f"btn={jj.get_numbuttons()} hat={jj.get_numhats()} "
+              f"mapped={_sdl_controller.is_controller(i)}{tag}")
+
     if not pads:
-        print("[-] No non-Ounce controller detected.")
-        print("    Under Steam this usually means Steam Input is not enabled for")
-        print("    this shortcut, so the pad is still in Desktop (keyboard/mouse)")
-        print("    mode. Properties -> Controller -> Enable Steam Input.")
+        print("\n[-] No usable non-Ounce controller.")
+        print("    If Steam shows a virtual gamepad but it is absent above, the")
+        print("    process Steam hooked is not this one, or Steam is still")
+        print("    applying its Desktop configuration.")
         return
 
     idx, name = pads[0]
@@ -530,6 +556,491 @@ OUNCE_SELF_NAMES = ("nintendo switch pro controller",)
 
 _pg = None            # pygame module, imported lazily
 _sdl_controller = None
+_window = None        # status window, only under Steam (see gamepad_available)
+
+
+# --------------------------------------------------------------------------
+# Capture card preview (video + audio) via ffmpeg.
+#
+# The window has to exist anyway for Steam Input to attach, so showing the
+# capture card in it means the window you must keep focused is also the one
+# you want to look at.
+# --------------------------------------------------------------------------
+
+# Preview window size. With the VLC backend this is the actual display
+# resolution - VLC renders into this window, so a small window means a small
+# picture no matter how good the source is. The ffmpeg fallback scales to it.
+WINDOW_W, WINDOW_H = 1280, 720
+CAPTURE_W, CAPTURE_H = 960, 540      # ffmpeg-path pipe size only
+_NO_WINDOW = 0x08000000        # subprocess CREATE_NO_WINDOW, so ffmpeg stays hidden
+
+
+def ffmpeg_exe():
+    """Path to an ffmpeg binary: PATH first, else the pip-installed one."""
+    import shutil
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def list_dshow_devices():
+    """(video_names, audio_names) that ffmpeg can capture from."""
+    exe = ffmpeg_exe()
+    if not exe:
+        return [], []
+    try:
+        r = subprocess.run([exe, "-hide_banner", "-list_devices", "true",
+                            "-f", "dshow", "-i", "dummy"],
+                           capture_output=True, text=True, timeout=25,
+                           creationflags=_NO_WINDOW)
+    except Exception:
+        return [], []
+    video, audio = [], []
+    for line in (r.stderr or "").splitlines():
+        m = re.search(r'"([^"]+)"\s*\((video|audio)\)', line)
+        if m:
+            (video if m.group(2) == "video" else audio).append(m.group(1))
+    return video, audio
+
+
+def list_dshow_modes(device_name):
+    """Video modes a capture device advertises: [(w, h, fps, pixfmt), ...].
+
+    This matters more than it looks: DirectShow hands out the FIRST advertised
+    format unless you ask for something specific, and on capture cards that is
+    usually the smallest (640x480). Not specifying a mode does not mean
+    'native' - it means 'lowest'."""
+    exe = ffmpeg_exe()
+    if not exe:
+        return []
+    try:
+        r = subprocess.run([exe, "-hide_banner", "-f", "dshow",
+                            "-list_options", "true", "-i", f"video={device_name}"],
+                           capture_output=True, text=True, timeout=60,
+                           creationflags=_NO_WINDOW)
+    except Exception:
+        return []
+    modes, seen = [], set()
+    for line in (r.stderr or "").splitlines():
+        # Both raw AND compressed formats matter. Raw (pixel_format=) tops out
+        # at 4K30 on this class of card because uncompressed 4K60 will not fit
+        # the USB link; the high modes - 4K60, 1440p144, 1080p240 - are only
+        # offered as vcodec=mjpeg. Parsing just pixel_format= silently caps you
+        # at half the frame rate the card can actually deliver.
+        m = re.search(r"(?:vcodec=(\w+)|pixel_format=(\w+)).*?"
+                      r"max s=(\d+)x(\d+) fps=([\d.]+)", line)
+        if not m:
+            continue
+        fmt = m.group(1) or m.group(2)
+        w, h, fps = int(m.group(3)), int(m.group(4)), round(float(m.group(5)))
+        key = (w, h, fps, fmt)
+        if key not in seen:
+            seen.add(key)
+            modes.append((w, h, fps, fmt))
+    return modes
+
+
+def pick_best_mode(modes, want=None):
+    """Choose a capture mode. `want` is 'WxH', 'WxH@FPS', or None for best.
+
+    With no preference: highest resolution first, then the highest frame rate
+    available at that resolution. Resolution is ranked first deliberately -
+    maximising pixels-per-second instead would pick 1440p144 over 4K60, which
+    is not what someone with a 4K source expects to see."""
+    if not modes:
+        return None
+    if want:
+        m = re.match(r"(\d+)x(\d+)(?:@([\d.]+))?$", want.strip().lower())
+        if m:
+            w, h = int(m.group(1)), int(m.group(2))
+            fps = round(float(m.group(3))) if m.group(3) else None
+            cands = [x for x in modes if x[0] == w and x[1] == h
+                     and (fps is None or x[2] == fps)]
+            if cands:
+                return max(cands, key=lambda x: x[2])
+    return max(modes, key=lambda x: (x[0] * x[1], x[2]))
+
+
+def pick_capture(ref, names, keywords=("elgato", "capture", "hdmi")):
+    """Resolve a device reference (index or name substring) against `names`."""
+    if not names:
+        return None
+    if ref is None:
+        for n in names:                       # prefer a capture card
+            if any(k in n.lower() for k in keywords):
+                return n
+        return names[0]
+    try:
+        i = int(ref)
+        return names[i] if 0 <= i < len(names) else None
+    except ValueError:
+        pass
+    for n in names:
+        if ref.lower() in n.lower():
+            return n
+    return None
+
+
+class VlcPreview:
+    """Capture card rendered by VLC directly into the pygame window.
+
+    This exists because piping raw frames through Python cannot reach 4K60:
+    that is 1.49 GB/s as RGB, or 0.75 GB/s as NV12, before any per-frame Python
+    work. VLC instead decodes on the GPU and draws straight into our window
+    via set_hwnd(), so no video data crosses into Python at all - the frame
+    rate is bounded by the GPU rather than by a pipe. It also plays the audio
+    to the default Windows device itself, so no separate audio path is needed.
+
+    The window handle is the pygame window's, so it is still the window Steam
+    Input attaches to."""
+
+    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None):
+        self.error = None
+        self._player = None
+        self._inst = None
+        try:
+            import vlc
+        except Exception:
+            self.error = "python-vlc not installed (pip install python-vlc)"
+            return
+        try:
+            # --no-xlib is harmless on Windows; the rest keeps latency down.
+            self._inst = vlc.Instance([
+                "--no-video-title-show",
+                "--quiet",
+                "--network-caching=0",
+                "--live-caching=0",
+                "--file-caching=0",
+            ])
+            self._player = self._inst.media_player_new()
+            # The mode MUST be requested explicitly. DirectShow otherwise hands
+            # over the first advertised format, which on this card is 640x480 -
+            # that is why the picture looked low-res regardless of the source.
+            mrl = "dshow://"
+            opts = [f":dshow-vdev={video_dev}",
+                    f":dshow-adev={audio_dev or 'none'}",
+                    ":live-caching=0"]
+            if mode:
+                w, h, fps, pixfmt = mode
+                # VLC wants a FourCC here. MJPEG is the important one: it is
+                # the only format offering 4K60 / 1440p144 / 1080p240, because
+                # uncompressed at those rates will not fit over USB.
+                chroma = {"mjpeg": "MJPG", "yuyv422": "YUY2",
+                          "yuv420p": "I420", "nv12": "NV12"}.get(pixfmt, pixfmt)
+                opts += [f":dshow-size={w}x{h}",
+                         f":dshow-fps={fps}",
+                         f":dshow-chroma={chroma}"]
+            media = self._inst.media_new(mrl, *opts)
+            self._player.set_media(media)
+            self._player.set_hwnd(hwnd)       # render into the pygame window
+            self._player.play()
+        except Exception as e:
+            self.error = f"VLC failed to start ({e})"
+            self.stop()
+
+    def is_playing(self):
+        try:
+            return bool(self._player and self._player.is_playing())
+        except Exception:
+            return False
+
+    def stop(self):
+        for obj, meth in ((self._player, "stop"), (self._inst, "release")):
+            try:
+                if obj:
+                    getattr(obj, meth)()
+            except Exception:
+                pass
+
+
+def _explain_capture_error(stderr_text):
+    """Turn ffmpeg's output into something actionable.
+
+    ffmpeg's final line is usually just 'I/O error', while the useful line is
+    further up - most often that the capture card is already open elsewhere,
+    since DirectShow devices are exclusive."""
+    lines = [l.strip() for l in (stderr_text or "").splitlines() if l.strip()]
+    joined = " ".join(lines).lower()
+    if "already in use" in joined or "could not run graph" in joined:
+        return ("device is in use by another app - close Elgato Studio / "
+                "4K Capture Utility / OBS and retry")
+    if "no signal" in joined or "timeout" in joined:
+        return "no signal from the capture card"
+    if not lines:
+        return "capture ended (no signal?)"
+    # Prefer a line that actually names a problem over ffmpeg's generic tail.
+    for l in reversed(lines):
+        if "error opening input files" not in l.lower():
+            return l[:100]
+    return lines[-1][:100]
+
+
+class CapturePreview:
+    """Capture-card video decoded by ffmpeg on a background thread.
+
+    The thread is the point: a frame read blocks for up to a frame period
+    (~16ms at 60fps), which would wreck the 500Hz input loop if done inline.
+    The loop only ever blits the most recent frame, so video can never gate
+    input - the controller stays responsive even if capture stalls entirely."""
+
+    def __init__(self, device_name, w=CAPTURE_W, h=CAPTURE_H, fps=30,
+                 in_size=None, in_fps=None):
+        self.error = None
+        self.size = (w, h)
+        self._frame = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._proc = None
+
+        exe = ffmpeg_exe()
+        if not exe:
+            self.error = "ffmpeg not found (pip install imageio-ffmpeg)"
+            return
+
+        # Scale and rate-limit inside ffmpeg, never in Python. Two reasons:
+        # ffmpeg does it far more cheaply, and it decides how much data crosses
+        # the pipe. Raw RGB is bulky - 960x540 is ~1.5MB per frame, so 60fps
+        # would be ~93MB/s through a Python pipe. Capping the preview at 30fps
+        # halves that, and none of it affects input latency because the capture
+        # runs on its own thread.
+        cmd = [exe, "-hide_banner", "-loglevel", "error",
+               "-fflags", "nobuffer", "-flags", "low_delay",
+               "-f", "dshow", "-rtbufsize", "256M"]
+        # Optionally ask the card for a specific mode. A 4K60 or 1440p120
+        # source costs real CPU to decode; requesting a smaller/slower mode
+        # pushes that work onto the card instead.
+        if in_size:
+            cmd += ["-video_size", in_size]
+        if in_fps:
+            cmd += ["-framerate", str(in_fps)]
+        cmd += ["-i", f"video={device_name}",
+                "-vf", f"scale={w}:{h}",
+                "-r", str(fps),
+                "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+        try:
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE,
+                                          creationflags=_NO_WINDOW)
+        except Exception as e:
+            self.error = f"could not start ffmpeg ({e})"
+            return
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self):
+        import numpy as np
+        w, h = self.size
+        nbytes = w * h * 3
+        while not self._stop.is_set():
+            try:
+                raw = self._proc.stdout.read(nbytes)
+            except Exception:
+                break
+            if not raw or len(raw) < nbytes:
+                # Capture ended: usually no signal, or another app grabbed the
+                # device. Surface it rather than showing a frozen frame.
+                if not self._stop.is_set():
+                    err = b""
+                    try:
+                        err = self._proc.stderr.read() or b""
+                    except Exception:
+                        pass
+                    self.error = _explain_capture_error(err.decode("utf-8", "replace"))
+                break
+            try:
+                arr = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 3))
+                arr = np.transpose(arr, (1, 0, 2))   # pygame surfaces are column-major
+                with self._lock:
+                    self._frame = arr
+            except Exception:
+                pass
+
+    def blit_into(self, surface):
+        """Draw the newest frame scaled to the window. True if one was drawn."""
+        with self._lock:
+            frame = self._frame
+        if frame is None:
+            return False
+        try:
+            surf = _pg.surfarray.make_surface(frame)
+            if surf.get_size() != surface.get_size():
+                surf = _pg.transform.smoothscale(surf, surface.get_size())
+            surface.blit(surf, (0, 0))
+            return True
+        except Exception:
+            return False
+
+    def stop(self):
+        self._stop.set()
+        if self._proc:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+
+
+class CaptureAudio:
+    """Capture-card audio piped from ffmpeg to the default Windows output.
+
+    ffmpeg has no audio output device muxer on Windows (only the sdl2 video
+    output), so it cannot play to a device by itself. Instead it decodes to raw
+    PCM on stdout and sounddevice pushes that to whatever Windows has set as
+    the default output."""
+
+    def __init__(self, device_name, rate=48000, channels=2):
+        self.error = None
+        self._stop = threading.Event()
+        self._proc = None
+        self._stream = None
+
+        exe = ffmpeg_exe()
+        if not exe:
+            self.error = "ffmpeg not found"
+            return
+        try:
+            import sounddevice as sd
+        except Exception:
+            self.error = "sounddevice not installed (pip install sounddevice)"
+            return
+
+        cmd = [exe, "-hide_banner", "-loglevel", "error",
+               "-fflags", "nobuffer", "-flags", "low_delay",
+               "-f", "dshow", "-rtbufsize", "16M",
+               "-i", f"audio={device_name}",
+               "-f", "s16le", "-acodec", "pcm_s16le",
+               "-ar", str(rate), "-ac", str(channels), "-"]
+        try:
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL,
+                                          creationflags=_NO_WINDOW)
+            self._stream = sd.RawOutputStream(samplerate=rate, channels=channels,
+                                              dtype="int16", blocksize=1024)
+            self._stream.start()
+        except Exception as e:
+            self.error = f"audio start failed ({e})"
+            self.stop()
+            return
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self):
+        chunk = 1024 * 2 * 2          # frames * channels * bytes per sample
+        while not self._stop.is_set():
+            try:
+                data = self._proc.stdout.read(chunk)
+                if not data:
+                    break
+                self._stream.write(data)
+            except Exception:
+                break
+
+    def stop(self):
+        self._stop.set()
+        for obj, meth in ((self._proc, "kill"), (self._stream, "stop")):
+            try:
+                if obj:
+                    getattr(obj, meth)()
+            except Exception:
+                pass
+
+
+def set_window_size(w, h):
+    global WINDOW_W, WINDOW_H
+    WINDOW_W, WINDOW_H = max(320, w), max(180, h)
+
+
+def _open_status_window(pygame):
+    """Small always-there window so Steam Input has something to attach to.
+
+    Steam decides which controller configuration to apply based on the focused
+    window. Without one it keeps the pad in Desktop (keyboard/mouse) mode, so
+    this window is functional, not decorative - it is what puts the controller
+    into game mode."""
+    global _window
+    pygame.display.set_caption("Ounce Bridge - keep focused for Steam Input")
+    # Sized for the capture preview: this is the same window Steam Input needs
+    # focused, so the game view and the focus target are one and the same.
+    _window = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
+    _draw_status("starting...")
+
+    # Raise and focus ourselves so the controller switches out of Desktop mode
+    # without the user having to click the window first.
+    try:
+        import ctypes
+        hwnd = pygame.display.get_wm_info().get("window")
+        if hwnd:
+            user32 = ctypes.windll.user32
+            user32.ShowWindow(hwnd, 5)          # SW_SHOW
+            user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass   # focus is a nicety; the window itself is what matters
+
+
+def _draw_status(line, extra=()):
+    """Repaint the status window.
+
+    With preview off (the default) this window's only job is to be the thing
+    Steam Input attaches to - so it may as well show what the bridge is doing.
+    Video should come from the capture card's HDMI passthrough, which is
+    lag-free hardware and far better than anything drawn here."""
+    if _window is None or _pg is None:
+        return
+    try:
+        w, h = _window.get_size()
+        _window.fill((16, 16, 20))
+        big = _pg.font.SysFont("consolas", 22)
+        mid = _pg.font.SysFont("consolas", 15)
+        small = _pg.font.SysFont("consolas", 13)
+
+        _window.blit(big.render("Ounce Bridge", True, (235, 235, 245)), (20, 18))
+        _window.blit(mid.render(line, True, (140, 220, 160)), (20, 54))
+
+        y = 92
+        for s in extra:
+            _window.blit(small.render(s, True, (190, 190, 205)), (20, y))
+            y += 20
+
+        y = max(y + 10, h - 62)
+        _window.blit(small.render("Keep this window focused - Steam applies its game",
+                                  True, (120, 120, 140)), (20, y))
+        _window.blit(small.render("controller layout to whichever window has focus.",
+                                  True, (120, 120, 140)), (20, y + 18))
+        _pg.display.flip()
+    except Exception:
+        pass
+
+
+def pump_window(vlc_active=False):
+    """Service the window's message queue so Windows does not mark it as
+    'not responding', which would also drop it out of the foreground.
+
+    Also handles resizing. With VLC we must NOT call set_mode() again: that
+    can recreate the window and invalidate the HWND VLC is drawing into.
+    VLC follows the window on its own, so resizing just works."""
+    global _window
+    if _window is None or _pg is None:
+        return True
+    try:
+        for e in _pg.event.get():
+            if e.type == _pg.QUIT:
+                return False
+            if e.type == _pg.VIDEORESIZE and not vlc_active:
+                _window = _pg.display.set_mode((max(320, e.w), max(180, e.h)),
+                                               _pg.RESIZABLE)
+            if e.type == _pg.KEYDOWN and e.key == _pg.K_F11 and not vlc_active:
+                # Quick fullscreen toggle for the ffmpeg path.
+                try:
+                    _pg.display.toggle_fullscreen()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return True
 
 
 def gamepad_available():
@@ -538,14 +1049,40 @@ def gamepad_available():
         return True
     try:
         import os
-        # Headless: never pop up a window just to read a joystick.
-        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
         os.environ.setdefault("SDL_JOYSTICK_HIDAPI_PS5", "1")   # native DualSense
-        os.environ.setdefault("SDL_JOYSTICK_HIDAPI_STEAM", "1") # Steam Controller
+
+        # Steam sets these in the environment of anything it launches. When we
+        # are running under Steam, Steam Input owns the pad and presents it as
+        # a virtual gamepad - so SDL's direct Steam Controller HID driver must
+        # be OFF, or it claims the device first and the layout configured in
+        # Steam silently does nothing. Standalone, we want the opposite, so the
+        # Steam Controller is usable at all.
+        under_steam = any(os.environ.get(v) for v in
+                          ("SteamAppId", "SteamGameId", "SteamClientLaunch",
+                           "SteamOverlayGameId", "SteamEnv"))
+        os.environ.setdefault("SDL_JOYSTICK_HIDAPI_STEAM",
+                              "0" if under_steam else "1")
+        if under_steam:
+            os.environ.setdefault("SDL_JOYSTICK_RAWINPUT", "0")
+
+        # Steam switches a controller out of its Desktop (keyboard/mouse)
+        # configuration when it detects the *game* - which it does by hooking a
+        # real window. A windowless process never triggers that switch, leaving
+        # the pad stuck in mouse mode no matter what layout is configured. So
+        # under Steam we create an actual window; standalone we stay headless.
+        want_window = under_steam or os.environ.get("OUNCE_WINDOW") == "1"
+        if not want_window:
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
         import pygame
         from pygame._sdl2 import controller as sdlcontroller
         pygame.init()
         sdlcontroller.init()
+        if want_window:
+            try:
+                _open_status_window(pygame)
+            except Exception as e:
+                print(f"[!] Could not create a window ({e}); continuing headless.")
         _pg, _sdl_controller = pygame, sdlcontroller
         return True
     except Exception as e:
@@ -721,6 +1258,53 @@ def main():
                         help="Controller index for legacy single-slot mode (see --list-controllers).")
     parser.add_argument("--list-controllers", action="store_true",
                         help="List detected controllers and exit.")
+    parser.add_argument("--capture", default=None, metavar="DEV",
+                        help="Show this capture device in the window (index or name "
+                             "substring, e.g. --capture Elgato). Default: auto-pick a "
+                             "capture card when a window is shown.")
+    parser.add_argument("--capture-audio", default=None, metavar="DEV",
+                        help="Play this capture device's audio to the default Windows "
+                             "output. Default: the matching audio device.")
+    parser.add_argument("--no-preview", action="store_true",
+                        help="Do not show the capture card in the window. Worth doing if "
+                             "you already watch the card's HDMI passthrough on a TV - "
+                             "that path is lag-free hardware and never touches the PC.")
+    parser.add_argument("--preview", action="store_true",
+                        help="(default) Show the capture card in the window.")
+    parser.add_argument("--no-capture", action="store_true",
+                        help="Alias for --no-preview.")
+    parser.add_argument("--video-backend", choices=["vlc", "ffmpeg"], default="vlc",
+                        help="How the capture card is drawn. 'vlc' renders on the GPU "
+                             "straight into the window (handles 4K60, plays its own "
+                             "audio). 'ffmpeg' pipes raw frames through Python, which "
+                             "caps out near 1080p. Default vlc, falling back to ffmpeg.")
+    parser.add_argument("--capture-size", default=f"{CAPTURE_W}x{CAPTURE_H}",
+                        metavar="WxH",
+                        help="Preview size. Raw frames cross a pipe, so this sets the "
+                             "bandwidth: 960x540 is ~1.5MB/frame. Default 960x540.")
+    parser.add_argument("--capture-fps", type=int, default=30, metavar="N",
+                        help="Preview frame rate cap. Default 30; 60 doubles pipe "
+                             "bandwidth for little visible gain.")
+    parser.add_argument("--capture-mode", default=None, metavar="WxH[@FPS]",
+                        help="Capture mode to request, e.g. 3840x2160@30 or 1920x1080@120. "
+                             "Default: the highest pixels-per-second the card offers. "
+                             "DirectShow gives you 640x480 unless a mode is requested.")
+    parser.add_argument("--list-modes", action="store_true",
+                        help="List the capture card's supported modes and exit.")
+    parser.add_argument("--capture-input-size", default=None, metavar="WxH",
+                        help="Ask the card for this input mode (e.g. 1920x1080). A 4K60 "
+                             "or 1440p120 source costs real CPU to decode; requesting a "
+                             "smaller mode moves that work onto the card.")
+    parser.add_argument("--capture-input-fps", type=int, default=None, metavar="N",
+                        help="Ask the card for this input frame rate (e.g. 30 or 60).")
+    parser.add_argument("--list-capture", action="store_true",
+                        help="List capture devices ffmpeg can see and exit.")
+    parser.add_argument("--window", action="store_true",
+                        help="Force the preview window even when not launched by Steam.")
+    parser.add_argument("--window-size", default=f"{WINDOW_W}x{WINDOW_H}", metavar="WxH",
+                        help="Preview window size. With the VLC backend this IS the "
+                             "display resolution, so make it as large as you want the "
+                             "picture. Default 1280x720. The window is resizable.")
     parser.add_argument("--probe", action="store_true",
                         help="Show live axis/button/hat values from the controller and "
                              "exit. Run this through Steam to see what Steam Input is "
@@ -739,6 +1323,44 @@ def main():
         write_default_config(args.dump_config)
         print(f"[+] Wrote default config to {args.dump_config}")
         print("    Edit it, then run with --config " + args.dump_config)
+        sys.exit(0)
+
+    if args.window:
+        import os
+        os.environ["OUNCE_WINDOW"] = "1"
+    if args.window_size:
+        try:
+            w, h = (int(x) for x in args.window_size.lower().split("x"))
+            set_window_size(w, h)
+        except Exception:
+            print(f"[-] Bad --window-size '{args.window_size}', using default")
+
+    if args.list_capture:
+        vids, auds = list_dshow_devices()
+        if not vids and not auds:
+            print("[-] ffmpeg found no capture devices "
+                  "(is ffmpeg installed? pip install imageio-ffmpeg)")
+        print("Video:")
+        for i, n in enumerate(vids):
+            print(f"   [{i}] {n}")
+        print("Audio:")
+        for i, n in enumerate(auds):
+            print(f"   [{i}] {n}")
+        sys.exit(0)
+
+    if args.list_modes:
+        vids, _ = list_dshow_devices()
+        dev = pick_capture(args.capture, vids)
+        if not dev:
+            print("[-] No capture device found.")
+            sys.exit(1)
+        modes = list_dshow_modes(dev)
+        best = pick_best_mode(modes)
+        print(f"Modes for {dev}:")
+        for w, h, fps, pf in sorted(modes, key=lambda x: -(x[0] * x[1] * x[2])):
+            star = "  <- default (highest resolution)" if (w, h, fps, pf) == best else ""
+            print(f"   {w}x{h} @{fps:>3}fps  {pf}{star}")
+        print("\nSelect one with --capture-mode WxH@FPS")
         sys.exit(0)
 
     if args.probe:
@@ -922,8 +1544,75 @@ def main():
     else:
         print("[+] Auto-relaunch disabled.\n")
 
+    # Capture card preview. Only meaningful when a window exists, which is the
+    # Steam case - the window has to be there for Steam Input anyway, so we may
+    # as well put the game on it.
+    capture = capture_audio = vlc_preview = None
+    # Note this can only ever be the CAPTURE stream. The card's HDMI
+    # passthrough is a hardware path from the card to a display and never
+    # reaches the PC, so it cannot be drawn here - passthrough is the better
+    # picture (4K60/1440p120, lag-free) but it is not available to software.
+    want_preview = not (args.no_preview or args.no_capture)
+    if _window is not None and want_preview:
+        vids, auds = list_dshow_devices()
+        vname = pick_capture(args.capture, vids)
+        aname = pick_capture(args.capture_audio, auds)
+
+        # Preferred path: VLC draws on the GPU into this very window. Nothing
+        # about the video crosses into Python, so 4K60 is limited by the GPU
+        # rather than by pipe bandwidth, and VLC plays the audio itself.
+        if vname and args.video_backend == "vlc":
+            hwnd = None
+            try:
+                hwnd = _pg.display.get_wm_info().get("window")
+            except Exception:
+                pass
+            if hwnd:
+                mode = pick_best_mode(list_dshow_modes(vname), args.capture_mode)
+                print(f"[+] Capture (VLC, GPU): {vname}")
+                if mode:
+                    print(f"    mode: {mode[0]}x{mode[1]} @{mode[2]}fps {mode[3]}"
+                          f"   (--list-modes for alternatives)")
+                else:
+                    print("    mode: card advertised none; letting DirectShow choose")
+                if aname:
+                    print(f"    audio: {aname} -> default Windows output")
+                vlc_preview = VlcPreview(hwnd, vname, aname, mode)
+                if vlc_preview.error:
+                    print(f"[!] VLC backend failed: {vlc_preview.error}")
+                    print("    Falling back to the ffmpeg pipe (lower resolution).")
+                    vlc_preview = None
+                else:
+                    vname = None      # handled; skip the ffmpeg path below
+                    aname = None
+
+        if vname:
+            try:
+                pw, ph = (int(x) for x in args.capture_size.lower().split("x"))
+            except Exception:
+                print(f"[-] Bad --capture-size '{args.capture_size}', using default")
+                pw, ph = CAPTURE_W, CAPTURE_H
+            print(f"[+] Capture video: {vname} -> {pw}x{ph} @{args.capture_fps}fps")
+            capture = CapturePreview(vname, pw, ph, args.capture_fps,
+                                     args.capture_input_size, args.capture_input_fps)
+            if capture.error:
+                print(f"[!] Capture video failed: {capture.error}")
+                capture = None
+        elif args.capture:
+            print(f"[-] No capture device matching '{args.capture}' "
+                  f"(try --list-capture)")
+
+        # Only needed on the ffmpeg path; VLC plays its own audio.
+        if aname:
+            print(f"[+] Capture audio: {aname} -> default Windows output")
+            capture_audio = CaptureAudio(aname)
+            if capture_audio.error:
+                print(f"[!] Capture audio failed: {capture_audio.error}")
+                capture_audio = None
+
     total_sent = 0
     start_time = time.monotonic()
+    last_paint = 0.0
 
     try:
         while True:
@@ -983,6 +1672,31 @@ def main():
             # busy-wait on the OS output queue, with no timeout, which adds
             # latency and jitter and can block outright if the device stalls.)
 
+            # Repaint the window at ~30fps. Deliberately decoupled from the
+            # input loop above, which runs at 500Hz: painting is far more
+            # expensive than building a packet and must never pace it.
+            if _window is not None and (time.monotonic() - last_paint) >= 0.033:
+                last_paint = time.monotonic()
+                if not pump_window(vlc_active=(vlc_preview is not None)):
+                    print("\n[+] Window closed - exiting.")
+                    break
+                if vlc_preview is not None:
+                    # VLC owns the window's pixels; do not draw over it.
+                    pass
+                elif capture is not None and capture.blit_into(_window):
+                    _pg.display.flip()
+                    if capture.error:
+                        print(f"[!] Capture stopped: {capture.error}")
+                        capture = None
+                else:
+                    _draw_status(
+                        "waiting for capture signal..." if capture else
+                        f"driving {len(active_slots)} controller(s)",
+                        extra=[
+                            f"slot {s}: " + ", ".join(l for _, _, l in slot_sources[s])
+                            for s in active_slots
+                        ] + [f"packets sent: {total_sent}"])
+
             # 2. Drain CDC telemetry and show it
             try:
                 while ser.in_waiting > 0:
@@ -1005,6 +1719,9 @@ def main():
     except Exception as e:
         print(f"\n[+] Unexpected error caught: {e}")
     finally:
+        for obj in (capture, capture_audio, vlc_preview):
+            if obj is not None:
+                obj.stop()
         try:
             ser.close()
         except Exception:
