@@ -739,21 +739,26 @@ class VlcPreview:
             self._player.set_media(media)
             self._player.set_hwnd(hwnd)       # render into the pygame window
             self._player.play()
-            self.fit()
         except Exception as e:
             self.error = f"VLC failed to start ({e})"
             self.stop()
 
-    def fit(self):
-        """Make the picture fit the window without distorting it.
+    def fit(self, window_size=None):
+        """Fill the window completely, with no letterbox or pillarbox bars.
 
-        Embedded VLC otherwise stretches to fill the window, so any window
-        whose shape does not match the source gets a squished image. scale=0
-        means 'fit to the window', and clearing the forced aspect ratio makes
-        it use the source's own - together they letterbox instead of stretch."""
+        Leaving the aspect ratio unset makes VLC letterbox to the source's own
+        aspect, which leaves bars whenever the window is even slightly off that
+        shape (and window chrome makes that the normal case). Telling VLC the
+        display aspect IS the window's aspect makes it fill edge to edge. The
+        window is separately snapped to the source aspect, so this fills
+        without visibly distorting anything."""
         try:
-            self._player.video_set_scale(0.0)     # 0 = fit to window
-            self._player.video_set_aspect_ratio(None)   # use the source aspect
+            self._player.video_set_scale(0.0)          # 0 = fit to window
+            if window_size and window_size[1]:
+                w, h = int(window_size[0]), int(window_size[1])
+                self._player.video_set_aspect_ratio(f"{w}:{h}")
+            else:
+                self._player.video_set_aspect_ratio(None)
         except Exception:
             pass
 
@@ -969,6 +974,102 @@ class CaptureAudio:
                 pass
 
 
+_fullscreen = False
+_saved_window = None       # (style, exstyle, x, y, w, h) to restore on exit
+
+
+def is_fullscreen():
+    return _fullscreen
+
+
+def toggle_borderless_fullscreen(force=None):
+    """Borderless fullscreen on the monitor the window is currently on.
+
+    Done with Win32 style changes rather than pygame's fullscreen: SDL's
+    fullscreen path recreates the window, which would invalidate the HWND VLC
+    renders into and kill the video. Stripping the frame and resizing in place
+    keeps the same window, so playback continues uninterrupted.
+
+    Borderless (WS_POPUP) rather than exclusive fullscreen also means alt-tab
+    and the Steam overlay keep working, and focus - which Steam Input depends
+    on - behaves normally."""
+    global _fullscreen, _saved_window
+    if _window is None or _pg is None:
+        return
+    want = (not _fullscreen) if force is None else bool(force)
+    if want == _fullscreen:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        hwnd = _pg.display.get_wm_info().get("window")
+        if not hwnd:
+            return
+
+        GWL_STYLE, GWL_EXSTYLE = -16, -20
+        WS_POPUP, WS_VISIBLE = 0x80000000, 0x10000000
+        SWP_FRAMECHANGED, SWP_NOZORDER = 0x0020, 0x0004
+        SWP_SHOWWINDOW = 0x0040
+
+        if want:
+            style = u.GetWindowLongW(hwnd, GWL_STYLE)
+            ex = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            r = wintypes.RECT()
+            u.GetWindowRect(hwnd, ctypes.byref(r))
+            _saved_window = (style, ex, r.left, r.top,
+                             r.right - r.left, r.bottom - r.top)
+
+            # Bounds of the monitor this window is on, so it fullscreens on the
+            # right display in a multi-monitor setup.
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+            mon = u.MonitorFromWindow(hwnd, 2)      # MONITOR_DEFAULTTONEAREST
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            u.GetMonitorInfoW(mon, ctypes.byref(mi))
+            m = mi.rcMonitor
+
+            u.SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE)
+            u.SetWindowPos(hwnd, 0, m.left, m.top,
+                           m.right - m.left, m.bottom - m.top,
+                           SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW)
+            _fullscreen = True
+        else:
+            if _saved_window:
+                style, ex, x, y, w, h = _saved_window
+                u.SetWindowLongW(hwnd, GWL_STYLE, style)
+                u.SetWindowLongW(hwnd, GWL_EXSTYLE, ex)
+                u.SetWindowPos(hwnd, 0, x, y, w, h,
+                               SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW)
+            _fullscreen = False
+    except Exception:
+        pass
+
+
+def window_client_size():
+    """The window's client area in real pixels.
+
+    This is what VLC actually draws into - not the pygame surface size and not
+    the outer window rect, both of which can disagree with it once title bar
+    and borders are involved."""
+    if _window is None or _pg is None:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        hwnd = _pg.display.get_wm_info().get("window")
+        if not hwnd:
+            return _window.get_size()
+        cr = wintypes.RECT()
+        ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(cr))
+        w, h = cr.right - cr.left, cr.bottom - cr.top
+        return (w, h) if w > 0 and h > 0 else _window.get_size()
+    except Exception:
+        return _window.get_size()
+
+
 def snap_window_to_aspect(aspect):
     """Force the window's client area to `aspect`, keeping its width.
 
@@ -979,6 +1080,8 @@ def snap_window_to_aspect(aspect):
     stretched when the shape drifts off 16:9."""
     if _window is None or _pg is None or not aspect:
         return
+    if _fullscreen:
+        return          # fullscreen owns the geometry; do not fight it
     try:
         import ctypes
         from ctypes import wintypes
@@ -1094,12 +1197,14 @@ def pump_window(vlc_active=False, on_resize=None):
                 else:
                     _window = _pg.display.set_mode((max(320, e.w), max(180, e.h)),
                                                    _pg.RESIZABLE)
-            if e.type == _pg.KEYDOWN and e.key == _pg.K_F11 and not vlc_active:
-                # Quick fullscreen toggle for the ffmpeg path.
-                try:
-                    _pg.display.toggle_fullscreen()
-                except Exception:
-                    pass
+            if e.type == _pg.KEYDOWN and e.key in (_pg.K_F11,):
+                toggle_borderless_fullscreen()
+                if on_resize:
+                    on_resize()
+            if e.type == _pg.KEYDOWN and e.key == _pg.K_ESCAPE and is_fullscreen():
+                toggle_borderless_fullscreen(False)
+                if on_resize:
+                    on_resize()
     except Exception:
         pass
     return True
@@ -1363,6 +1468,9 @@ def main():
                         help="List capture devices ffmpeg can see and exit.")
     parser.add_argument("--window", action="store_true",
                         help="Force the preview window even when not launched by Steam.")
+    parser.add_argument("--fullscreen", action="store_true",
+                        help="Start in borderless fullscreen. F11 toggles it at any "
+                             "time, Esc leaves it.")
     parser.add_argument("--window-size", default=f"{WINDOW_W}x{WINDOW_H}", metavar="WxH",
                         help="Preview window size. With the VLC backend this IS the "
                              "display resolution, so make it as large as you want the "
@@ -1651,9 +1759,13 @@ def main():
                     if mode and mode[0] and mode[1]:
                         vlc_aspect = mode[0] / mode[1]
                         snap_window_to_aspect(vlc_aspect)
-                        vlc_preview.fit()
-                        print(f"    window locked to {mode[0]}/{mode[1]} "
-                              f"({vlc_aspect:.4f}) so the picture fills it")
+                        if args.fullscreen:
+                            toggle_borderless_fullscreen(True)
+                        cs = window_client_size()
+                        vlc_preview.fit(cs)
+                        print(f"    client {cs[0]}x{cs[1]} filled edge to edge"
+                              f"{' (borderless fullscreen)' if is_fullscreen() else ''}")
+                        print("    F11 = borderless fullscreen, Esc = leave it")
                     vname = None      # handled; skip the ffmpeg path below
                     aname = None
 
@@ -1684,6 +1796,7 @@ def main():
     total_sent = 0
     start_time = time.monotonic()
     last_paint = 0.0
+    refit_until = 0.0      # keep re-fitting VLC until this time (see _refit)
 
     try:
         while True:
@@ -1749,19 +1862,30 @@ def main():
             if _window is not None and (time.monotonic() - last_paint) >= 0.033:
                 last_paint = time.monotonic()
                 def _refit():
-                    # Snap back to the source aspect, then let VLC re-fit into
-                    # it, so a drag-resize can never leave the picture squished.
+                    # Snap back to the source aspect, then tell VLC to fill the
+                    # new client area, so a resize leaves neither bars nor a
+                    # squished picture.
+                    #
+                    # VLC applies a geometry change asynchronously, so a single
+                    # fit() right after the resize lands before VLC has caught
+                    # up and briefly shows bars. Keep re-applying it for a short
+                    # while so the transition stays clean.
+                    nonlocal refit_until
                     snap_window_to_aspect(vlc_aspect)
                     if vlc_preview:
-                        vlc_preview.fit()
+                        vlc_preview.fit(window_client_size())
+                    refit_until = time.monotonic() + 0.6
 
                 if not pump_window(vlc_active=(vlc_preview is not None),
                                    on_resize=(_refit if vlc_preview else None)):
                     print("\n[+] Window closed - exiting.")
                     break
                 if vlc_preview is not None:
-                    # VLC owns the window's pixels; do not draw over it.
-                    pass
+                    # VLC owns the window's pixels; do not draw over it. Keep
+                    # re-fitting briefly after a resize so the async geometry
+                    # change never leaves visible bars mid-transition.
+                    if time.monotonic() < refit_until:
+                        vlc_preview.fit(window_client_size())
                 elif capture is not None and capture.blit_into(_window):
                     _pg.display.flip()
                     if capture.error:
