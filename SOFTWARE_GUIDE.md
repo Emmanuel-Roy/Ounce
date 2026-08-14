@@ -83,7 +83,7 @@ The RP2350 Master runs a high-precision $1\text{ kHz}$ dispatch loop:
 For software testing:
 
 ```bash
-python Hardware/host-src/tools/test_bridge.py --port COM3
+python tools/test_bridge.py --port COM3
 ```
 
 - **Controls**: `WASD` (Left Stick), `Arrows` (D-Pad), `K/J/I/U` (A/B/X/Y), `Q/E` (L/R), `1/2` (ZL/ZR).

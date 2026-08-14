@@ -80,6 +80,12 @@ int main() {
     // nothing is driven until the host says so.
     uint8_t enabled_slots = 0;
 
+    // Hardware unique id of the board answering on each slot, reassembled a
+    // byte at a time from the ACKs (see the dispatch loop below).
+    uint8_t board_id[4][8] = {{0}};
+    uint8_t  board_id_seen[4] = {0};     // bitmask of which bytes have arrived
+    uint32_t board_id_next[4] = {0};     // ms timestamp of next re-announce
+
     uint8_t serial_buf[9];
     size_t serial_idx = 0;
     uint32_t last_byte_time = 0;
@@ -197,6 +203,29 @@ int main() {
 
 			if (ack_status[i]) {
 				consecutive_unack_count[i] = 0;
+
+				// Each slave streams its 8-byte hardware unique id through the
+				// ACK's spare byte, one byte per packet, indexed by the packet
+				// counter we already receive. Reassembling it tells us which
+				// physical board answers on this slot - and it is the same id
+				// that board reports as its USB serial, so the host can tie a
+				// slot to a specific device instead of guessing from
+				// enumeration order.
+				uint8_t bi = ack_packets[i].packet_count % 8;
+				if (board_id[i][bi] != ack_packets[i].reserved) {
+					board_id[i][bi] = ack_packets[i].reserved;
+					board_id_seen[i] |= (1u << bi);
+				}
+				// Re-announce periodically rather than once per boot, so a tool
+				// that connects later can still learn the mapping without
+				// power-cycling the master.
+				if (board_id_seen[i] == 0xFF &&
+				    (board_id_next[i] == 0 || now >= board_id_next[i])) {
+					board_id_next[i] = now + 5000;
+					cdc_printf(" << ID T%d %02X%02X%02X%02X%02X%02X%02X%02X\n", i,
+						   board_id[i][0], board_id[i][1], board_id[i][2], board_id[i][3],
+						   board_id[i][4], board_id[i][5], board_id[i][6], board_id[i][7]);
+				}
 
 				if (ack_packets[i].packet_count == last_seen_count[i]) {
 					frozen_count_streak[i]++;

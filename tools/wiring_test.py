@@ -187,8 +187,97 @@ def identify(ser, seconds):
           "slot -> player mapping.")
 
 
+ID_LINE = re.compile(r"<< ID T(\d) ([0-9A-F]{16})")
+
+
+def windows_usb_serials():
+    """Serial numbers Windows currently sees for the emulated controllers.
+
+    SDL is no help here: it reports an identical GUID for every Ounce board and
+    exposes no serial at all, so the only way to tell the four apart on the host
+    is to ask Windows directly."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_PnPEntity -Filter \"DeviceID LIKE '%VID_057E&PID_2009%'\""
+             " | Select-Object -ExpandProperty DeviceID"],
+            capture_output=True, text=True, timeout=25).stdout
+    except Exception as e:
+        print(f"[!] Could not query Windows devices: {e}")
+        return {}
+    serials = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if line.upper().startswith("USB\\"):
+            serials[line.rsplit("\\", 1)[-1].upper()] = line
+    return serials
+
+
+def map_slots(ser, seconds):
+    """Correlate each SPI slot with the physical board and its USB device."""
+    mask = 0xF
+    pkts = []
+    for s in range(4):
+        pkts.append(packet(s, mask))
+
+    print(f"[+] Listening {seconds:.0f}s for board ids from the master...")
+    found = {}
+    buf = b""
+    t0 = time.monotonic()
+    last_w = 0.0
+    while time.monotonic() - t0 < seconds and len(found) < 4:
+        now = time.monotonic()
+        if now - last_w >= 0.002:
+            last_w = now
+            for p in pkts:
+                try:
+                    ser.write(p)
+                except Exception:
+                    pass
+        try:
+            n = ser.in_waiting
+        except Exception:
+            break
+        if n:
+            buf += ser.read(n)
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                m = ID_LINE.search(raw.decode("utf-8", "replace"))
+                if m:
+                    found[int(m.group(1))] = m.group(2)
+        time.sleep(0.001)
+
+    if not found:
+        print("[-] No board ids reported. Is the master running the current "
+              "firmware, and are the slaves responding?")
+        return
+
+    serials = windows_usb_serials()
+    print("\n" + "=" * 72)
+    print("SLOT -> PHYSICAL BOARD -> WINDOWS DEVICE")
+    print("=" * 72)
+    for slot in range(4):
+        bid = found.get(slot)
+        if not bid:
+            print(f"  slot {slot}  (CS {CS_PINS[slot]:<5})  no response")
+            continue
+        dev = serials.get(bid)
+        print(f"  slot {slot}  (CS {CS_PINS[slot]:<5})  board {bid}")
+        print(f"           {'-> ' + dev if dev else '-> (not currently enumerated on this PC)'}")
+    print("=" * 72)
+    missing = [b for b in found.values() if b not in serials]
+    if missing:
+        print("\nSome boards did not appear as USB devices here - they are")
+        print("presumably plugged into the Switch rather than this PC.")
+    print("\nAssign inputs to a slot with:  --assign <slot>=pad:<name>")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Ounce 4-slave wiring test")
+    ap.add_argument("--map", action="store_true",
+                    help="Report which physical board and USB device each SPI slot "
+                         "corresponds to, using the board ids the slaves report.")
     ap.add_argument("--identify", action="store_true",
                     help="Drive each slot in turn with an obvious input so you can "
                          "see which physical controller is which slot.")
@@ -214,6 +303,11 @@ def main():
     except Exception as e:
         print(f"[-] Could not open {port}: {e}")
         sys.exit(1)
+
+    if args.map:
+        map_slots(ser, max(args.seconds, 8.0))
+        ser.close()
+        return
 
     if args.identify:
         identify(ser, args.seconds)

@@ -177,9 +177,14 @@ def parse_assignment(spec):
     src = src.strip().lower()
     if src in ("keyboard", "kbd", "key"):
         return slots, ("keyboard", None)
+    if src in ("pad", "gamepad", "controller"):
+        # No reference given: take the first usable controller. Handy under
+        # Steam Input, where you cannot predict what Steam names its virtual
+        # pad, and for one-controller setups generally.
+        return slots, ("pad", None)
     if src.startswith("pad:") or src.startswith("gamepad:"):
         return slots, ("pad", src.split(":", 1)[1].strip())
-    raise ValueError(f"unknown source '{src}' (use keyboard, or pad:N / pad:<name>)")
+    raise ValueError(f"unknown source '{src}' (use keyboard, pad, or pad:N / pad:<name>)")
 
 
 def resolve_pad(ref):
@@ -660,11 +665,21 @@ def main():
                     slot_sources.setdefault(slot, []).append(
                         ("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard (default map)"))
                 continue
-            idx = resolve_pad(ref)
-            if idx is None:
-                print(f"[-] No controller matching '{ref}' (see --list-controllers).")
-                sys.exit(1)
-            c, name = open_pad_once(idx)
+            if ref is None:
+                c = open_controller(None)      # auto-pick, skipping our own targets
+                if c is None:
+                    sys.exit(1)
+                idx = next((i for i in range(_pg.joystick.get_count())
+                            if _pg.joystick.Joystick(i).get_name().strip().lower()
+                            not in OUNCE_SELF_NAMES), 0)
+                opened_pads.setdefault(idx, (c, _pg.joystick.Joystick(idx).get_name()))
+                name = opened_pads[idx][1]
+            else:
+                idx = resolve_pad(ref)
+                if idx is None:
+                    print(f"[-] No controller matching '{ref}' (see --list-controllers).")
+                    sys.exit(1)
+                c, name = open_pad_once(idx)
             for slot in slots:
                 slot_sources.setdefault(slot, []).append(
                     ("pad", (c, dict(DEFAULT_PAD_BUTTONS)), f"[{idx}] {name}"))
