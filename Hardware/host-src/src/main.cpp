@@ -42,7 +42,10 @@ int main() {
 	const uint HEARTBEAT_PIN = 25;          // on-board LED on most Pico 2 boards
 	gpio_init(HEARTBEAT_PIN);
 	gpio_set_dir(HEARTBEAT_PIN, GPIO_OUT);
-    sleep_ms(500); // Allow USB CDC stack to connect to host PC
+    busy_wait_us(500 * 1000); // Allow USB CDC stack to connect to host PC.
+                              // busy_wait, not sleep_ms - sleep_ms routes through
+                              // sleep_until()/__wfe() (see spi_master.cpp), which
+                              // could hang the firmware before it ever starts.
     cdc_printf("=== OUNCE PRIMARY RP2350 MASTER RUNNING ===\n");
 
     spi_master_init();
@@ -197,8 +200,30 @@ int main() {
 		}
 
         next_frame = delayed_by_us(next_frame, 1000);
+
+        // Never let the schedule fall behind real time. delayed_by_us() advances
+        // by a fixed 1ms regardless of how long the iteration actually took, so
+        // after any stall next_frame sits in the past and the wait below returns
+        // instantly for thousands of iterations - measured free-running at
+        // 6000 Hz, six times normal, hammering the slave right when it is least
+        // able to cope.
+        if (absolute_time_diff_us(get_absolute_time(), next_frame) < 0) {
+            next_frame = get_absolute_time();
+        }
+
 		gpio_put(HEARTBEAT_PIN, (loop_count >> 8) & 1);   // toggles ~every 256 ms
-        sleep_until(next_frame);
+
+        // busy_wait_until(), NOT sleep_until(). sleep_until() parks the core in
+        // __wfe() waiting for a timer alarm to fire an SEV; if that alarm event
+        // is lost the core never wakes. It then stops servicing USB, so TinyUSB
+        // leaves the bulk OUT endpoint unarmed and the USB hardware NAKs the
+        // host in hardware without raising an interrupt - so no event is ever
+        // generated to release the __wfe(). The halt sustains itself: measured
+        // stopping the loop dead for 8s, and once for 4min24s, recoverable only
+        // by a control transfer (a host DTR toggle hitting always-armed EP0).
+        // That was the cause of the intermittent freezes. This loop has nothing
+        // else to do with the spare cycles, so spinning here costs us nothing.
+        busy_wait_until(next_frame);
     }
 
     return 0;

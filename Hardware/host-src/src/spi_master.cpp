@@ -106,7 +106,16 @@ bool spi_master_transceive_packet(uint8_t slave_index,
     } else {
         gpio_put(CS_PINS[slave_index], 0);
     }
-    sleep_us(30);
+    // busy_wait_us(), NOT sleep_us(). sleep_us() routes through sleep_until(),
+    // which parks the core in __wfe() waiting for a timer alarm to fire an SEV.
+    // If that alarm event is lost the core never wakes: it stops servicing USB,
+    // TinyUSB leaves the bulk endpoints unarmed, the USB hardware then NAKs the
+    // host without raising an interrupt, and so nothing is left to generate the
+    // event that would release the __wfe(). The halt sustains itself and was
+    // measured stopping the firmware dead for 8s, and once for over 4 minutes.
+    // These three waits run on every SPI transaction at 1kHz, so they are by far
+    // the biggest exposure to that deadlock in this firmware.
+    busy_wait_us(30);
 
     bool xfer_ok = spi_transfer_with_timeout(
                             reinterpret_cast<const uint8_t*>(&tx_packet),
@@ -114,14 +123,14 @@ bool spi_master_transceive_packet(uint8_t slave_index,
                             sizeof(ControllerSpiPacket),
                             2000);
 
-    sleep_us(30);
+    busy_wait_us(30);   // see comment above - must not be sleep_us()
 
     if (slave_index == 0) {
         gpio_put(20, 1);
     } else {
         gpio_put(CS_PINS[slave_index], 1);
     }
-    sleep_us(50);
+    busy_wait_us(50);   // see comment above - must not be sleep_us()
 
     if (!xfer_ok) return false;
 
