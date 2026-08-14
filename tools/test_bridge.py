@@ -769,60 +769,68 @@ class Toolbar:
         return _pg.font.SysFont("segoeui", size) or _pg.font.SysFont("consolas", size)
 
     def draw(self, surface):
-        """Draw the strip (and any open menu). Returns nothing; records hit
-        rectangles so clicks can be resolved without re-deriving layout."""
+        """Collapsed strip with a single Settings button; everything else lives
+        in a panel that drops down from it.
+
+        Kept collapsed by default so the strip stealing height from the video
+        stays as small as possible - a permanent row of seven buttons was both
+        cramped and always in the way."""
         self._hit = []
         w = surface.get_width()
-        f = self._font(14)
+        f = self._font(13)
 
         _pg.draw.rect(surface, (28, 28, 34), (0, 0, w, TOOLBAR_H))
         _pg.draw.line(surface, (60, 60, 72), (0, TOOLBAR_H - 1), (w, TOOLBAR_H - 1))
 
-        buttons = [
-            ("device", "In: " + str(self.device or "none")),
-            ("mode", "Mode: " + (mode_label(self.mode) if self.mode else "default")),
-            ("hdr", "HDR: " + ("on" if self.hdr else "off")),
-        ]
-        for s in range(NUM_SLOTS):
-            buttons.append((f"slot{s}", f"P{s + 1}: {self._slot_label(s)}"))
+        cap = "Settings " + ("^" if self.open_menu else "v")
+        txt = f.render(cap, True, (230, 230, 240))
+        rect = _pg.Rect(6, 3, txt.get_width() + 16, TOOLBAR_H - 6)
+        _pg.draw.rect(surface, (52, 52, 64) if self.open_menu else (40, 40, 50),
+                      rect, border_radius=4)
+        surface.blit(txt, (rect.x + 8, rect.y + 3))
+        self._hit.append((rect, "open", "root"))
 
-        x = 8
-        for kind, cap in buttons:
-            txt = f.render(cap, True, (225, 225, 235))
-            rect = _pg.Rect(x, 5, txt.get_width() + 14, TOOLBAR_H - 10)
-            hot = self.open_menu == kind
-            active = kind.startswith("slot") and self.slots.get(int(kind[4:])) is not None
-            bg = (52, 52, 64) if hot else ((38, 58, 44) if active else (40, 40, 50))
-            _pg.draw.rect(surface, bg, rect, border_radius=4)
-            surface.blit(txt, (rect.x + 7, rect.y + 4))
-            self._hit.append((rect, "open", kind))
-            x += rect.width + 6
+        # Live summary next to the button, so the common case needs no clicks.
+        on = [f"P{s + 1}" for s in range(NUM_SLOTS) if self.slots.get(s) is not None]
+        bits = [mode_label(self.mode) if self.mode else "no mode",
+                "HDR on" if self.hdr else "HDR off",
+                ("+".join(on) if on else "no controllers")]
+        summary = f.render("   " + "   |   ".join(bits), True, (150, 150, 168))
+        surface.blit(summary, (rect.right + 4, rect.y + 3))
 
-        hint = f.render("F11", True, (120, 120, 138))
-        if x < w - hint.get_width() - 12:
-            surface.blit(hint, (w - hint.get_width() - 10, 9))
+        hint = f.render("F11 fullscreen", True, (110, 110, 128))
+        if rect.right + summary.get_width() < w - hint.get_width() - 14:
+            surface.blit(hint, (w - hint.get_width() - 8, rect.y + 3))
 
         if self.open_menu:
             self._draw_menu(surface, f)
 
     def _draw_menu(self, surface, f):
         items = []
-        menu_x = 10
-        if self.open_menu == "device":
+        menu_x = 6
+        if self.open_menu == "root":
+            # Top level of the dropdown: every setting with its current value,
+            # each opening its own list.
+            items = [(None, "-- capture --", None),
+                     ("go", f"Input :  {self.device or 'none'}", "device"),
+                     ("go", f"Mode  :  {mode_label(self.mode) if self.mode else 'default'}",
+                      "mode"),
+                     ("go", f"HDR   :  {'on' if self.hdr else 'off'}", "hdr"),
+                     (None, "-- controllers --", None)]
+            items += [("go", f"Controller {s + 1} :  {self._slot_label(s)}", f"slot{s}")
+                      for s in range(NUM_SLOTS)]
+        elif self.open_menu == "device":
             items = [("device", d, d) for d in self.devices]
         elif self.open_menu == "hdr":
             items = [("hdr", "HDR on  (pass through, no tone mapping)", True),
                      ("hdr", "HDR off (tone map to SDR)", False)]
         elif self.open_menu and self.open_menu.startswith("slot"):
             slot = int(self.open_menu[4:])
-            items = [("slot", "Keyboard", (slot, "keyboard"))]
+            items = [(None, f"-- Controller {slot + 1} --", None),
+                     ("slot", "Keyboard", (slot, "keyboard"))]
             items += [("slot", name, (slot, idx)) for idx, name in self.pads]
             items.append(("slot", "Disabled", (slot, None)))
-            # Open under the button that was clicked, not at the left edge.
-            for rect, kind, value in self._hit:
-                if kind == "open" and value == self.open_menu:
-                    menu_x = rect.x
-                    break
+            items.append(("go", "< back", "root"))
         else:
             # Grouped, because raw vs compressed is what decides whether 4K60
             # is even on the table.
@@ -859,7 +867,7 @@ class Toolbar:
                 elif kind == "slot":
                     sel = self.slots.get(value[0]) == value[1]
                 else:
-                    sel = False
+                    sel = False          # 'go' rows are navigation, never selected
                 rect = _pg.Rect(mx + 2, y, wmenu - 4, rowh)
                 if sel:
                     _pg.draw.rect(surface, (48, 74, 58), rect, border_radius=3)
@@ -873,11 +881,14 @@ class Toolbar:
         for rect, kind, value in self._hit:
             if rect.collidepoint(pos):
                 if kind == "open":
-                    self.open_menu = None if self.open_menu == value else value
+                    self.open_menu = None if self.open_menu else "root"
+                    return None
+                if kind == "go":
+                    self.open_menu = value       # navigate within the dropdown
                     return None
                 self.open_menu = None
                 return (kind, value)
-        self.open_menu = None
+        self.open_menu = None                    # click outside closes it
         return None
 
 
@@ -1179,7 +1190,7 @@ class CaptureAudio:
 _fullscreen = False
 _saved_window = None       # (style, exstyle, x, y, w, h) to restore on exit
 
-TOOLBAR_H = 34             # height of the toolbar strip, in pixels
+TOOLBAR_H = 26             # collapsed strip height; the menu drops down over it
 _video_child = None        # HWND VLC renders into (a child of the pygame window)
 
 
@@ -1756,8 +1767,15 @@ def main():
         sys.exit(0)
 
     if args.window:
-        import os
         os.environ["OUNCE_WINDOW"] = "1"
+
+    # Bring pygame up now if a window is wanted. It is otherwise only started
+    # as a side effect of opening a controller, so a keyboard-only setup would
+    # silently get no window - and therefore no toolbar, no capture, and no
+    # Steam Input attachment.
+    if (os.environ.get("OUNCE_WINDOW") == "1" or os.environ.get("SteamAppId")
+            or os.environ.get("SteamGameId")):
+        gamepad_available()
     if args.window_size:
         try:
             w, h = (int(x) for x in args.window_size.lower().split("x"))
@@ -2070,6 +2088,25 @@ def main():
                 print(f"[!] Capture audio failed: {capture_audio.error}")
                 capture_audio = None
 
+    def _slot_state():
+        """Current slot assignment in the shape the toolbar wants."""
+        out = {}
+        for s in range(NUM_SLOTS):
+            entries = slot_sources.get(s)
+            if not entries:
+                out[s] = None
+            elif entries[0][0] == "keyboard":
+                out[s] = "keyboard"
+            else:
+                out[s] = next((i for i, (c, _n) in opened_pads.items()
+                               if c is entries[0][1][0]), None)
+        return out
+
+    # Seed the toolbar with the real pad list and current assignment, so P1-P4
+    # show the truth from the first frame rather than after the first click.
+    if _window is not None:
+        toolbar.set_inputs(list_real_pads(), _slot_state())
+
     total_sent = 0
     start_time = time.monotonic()
     last_paint = 0.0
@@ -2189,12 +2226,7 @@ def main():
                         enabled_mask = 0
                         for s in active_slots:
                             enabled_mask |= (1 << s)
-                        toolbar.set_inputs(toolbar.pads,
-                                           {s: (None if s not in slot_sources else
-                                                ("keyboard"
-                                                 if slot_sources[s][0][0] == "keyboard"
-                                                 else src))
-                                            for s in range(NUM_SLOTS)})
+                        toolbar.set_inputs(toolbar.pads, _slot_state())
                         print(f"[+] Controller {slot + 1} -> "
                               f"{'disabled' if src is None else src}")
                         return
