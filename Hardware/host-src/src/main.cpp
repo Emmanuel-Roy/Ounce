@@ -58,11 +58,12 @@ int main() {
 
     auto reset_packet = [](ControllerSpiPacket &p, uint8_t id) {
         p.header = 0x5A;
-        p.target_id = id;
+        p.flags = id;          // target id only; Home/Capture cleared
         p.buttons = 0;
         p.lx = 128;
         p.ly = 128;
         p.rx = 128;
+        p.ry = 128;
         p.crc8 = 0;
     };
 
@@ -71,7 +72,7 @@ int main() {
         memset(&ack_packets[i], 0, sizeof(ControllerSpiAckPacket));
     }
 
-    uint8_t serial_buf[8];
+    uint8_t serial_buf[9];
     size_t serial_idx = 0;
     uint32_t last_byte_time = 0;
     uint32_t loop_count = 0;
@@ -115,18 +116,19 @@ int main() {
                     }
                 } else {
                     serial_buf[serial_idx++] = byte;
-                    if (serial_idx == 8) {
-                        uint8_t target_id = serial_buf[1];
-                        if (target_id < 4) {
-                            uint8_t expected_crc = calculate_crc8(serial_buf, 7);
-                            if (serial_buf[7] == expected_crc) {
-                                packets[target_id].target_id = target_id;
-                                memcpy(&packets[target_id].buttons, &serial_buf[2], 2);
-                                packets[target_id].lx = serial_buf[4];
-                                packets[target_id].ly = serial_buf[5];
-                                packets[target_id].rx = serial_buf[6];
-                                last_serial_rx_time[target_id] = now;
-                            }
+                    if (serial_idx == 9) {
+                        // Low 2 bits select the target; the rest of the byte
+                        // carries Home/Capture and rides through untouched.
+                        uint8_t target_id = serial_buf[1] & SPI_TARGET_ID_MASK;
+                        uint8_t expected_crc = calculate_crc8(serial_buf, 8);
+                        if (serial_buf[8] == expected_crc) {
+                            packets[target_id].flags = serial_buf[1];
+                            memcpy(&packets[target_id].buttons, &serial_buf[2], 2);
+                            packets[target_id].lx = serial_buf[4];
+                            packets[target_id].ly = serial_buf[5];
+                            packets[target_id].rx = serial_buf[6];
+                            packets[target_id].ry = serial_buf[7];
+                            last_serial_rx_time[target_id] = now;
                         }
                         serial_idx = 0;
                     }
@@ -146,7 +148,7 @@ int main() {
 			// bus idle
 		} else {
 			for (int i = 0; i < 1; i++) { // ONLY Target 0
-				packets[i].crc8 = calculate_crc8(reinterpret_cast<const uint8_t*>(&packets[i]), 7);
+				packets[i].crc8 = calculate_crc8(reinterpret_cast<const uint8_t*>(&packets[i]), 8);
 				ack_status[i] = spi_master_transceive_packet(i, packets[i], ack_packets[i]);
 
 				if (ack_status[i]) {
@@ -192,14 +194,22 @@ int main() {
 						   i, packets[i].buttons, packets[i].lx, packets[i].ly,
 						   ack_packets[i].packet_count);
 				} else {
-					cdc_printf(" << MISO DIAG: Target %d | Hdr: 0x%02X | ID: 0x%02X | Count: %u | CRC: 0x%02X\n",
+					// Kept under 64 bytes on purpose: that is the CDC TX FIFO
+					// size, and cdc_printf() truncates anything longer - which
+					// silently eats the trailing newline and makes consecutive
+					// lines run together in the log.
+					cdc_printf(" << DIAG T%d Hdr:%02X ID:%02X Cnt:%u CRC:%02X\n",
 						   i, ack_packets[i].header, ack_packets[i].slave_id,
 						   ack_packets[i].packet_count, ack_packets[i].crc8);
 				}
 			}
 		}
 
-        next_frame = delayed_by_us(next_frame, 1000);
+        // 500us => 2kHz polling. The SPI burst itself is only ~18us at 4MHz,
+        // so the poll period - not the clock - is what bounds how quickly a
+        // new input reaches the target. Loop body is roughly 130us (110us of
+        // CS setup/hold plus the transfer), leaving comfortable margin here.
+        next_frame = delayed_by_us(next_frame, 500);
 
         // Never let the schedule fall behind real time. delayed_by_us() advances
         // by a fixed 1ms regardless of how long the iteration actually took, so

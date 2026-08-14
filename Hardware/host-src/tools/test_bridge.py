@@ -32,6 +32,15 @@ VK_M = 0x4D  # Select (-) - SPI_MASK_S1
 
 VK_Z = 0x5A  # L3 Click
 VK_X = 0x58  # R3 Click
+
+VK_7 = 0x37  # Right Stick Left
+VK_8 = 0x38  # Right Stick Up
+VK_9 = 0x39  # Right Stick Right
+VK_0 = 0x30  # Right Stick Down
+
+VK_H = 0x48  # Home
+VK_C = 0x43  # Capture
+
 VK_ESC = 0x1B # Exit Bridge
 
 # SPI Button Mask Definitions matching GP2040-CE logical mapping
@@ -56,6 +65,12 @@ SPI_MASK_S2 = (1 << 13) # Start (+)
 SPI_MASK_L3 = (1 << 14) # L3
 SPI_MASK_R3 = (1 << 15) # R3
 
+# Home and Capture ride in the spare bits of the packet's flags byte, which
+# also carries the 2-bit target id. The 16-bit buttons field above is full.
+SPI_TARGET_ID_MASK   = 0x03
+SPI_AUX_MASK_HOME    = (1 << 6)
+SPI_AUX_MASK_CAPTURE = (1 << 7)
+
 def is_key_down(vk):
     return (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000) != 0
 
@@ -70,8 +85,9 @@ def calculate_crc8(data):
                 crc = (crc << 1) & 0xFF
     return crc
 
-def make_serial_packet(target_id, buttons, lx, ly, rx):
-    payload = struct.pack('<BBHBBB', 0x5A, target_id, buttons, lx, ly, rx)
+def make_serial_packet(target_id, buttons, lx, ly, rx, ry, aux=0):
+    flags = (target_id & SPI_TARGET_ID_MASK) | aux
+    payload = struct.pack('<BBHBBBB', 0x5A, flags, buttons, lx, ly, rx, ry)
     crc = calculate_crc8(payload)
     return payload + bytes([crc])
 
@@ -115,6 +131,7 @@ def main():
     print("[+] Connected! Transmitting real-time momentary controls to Target %d..." % args.target)
     print("\n--- Switch Pro Control Mapping ---")
     print("  WASD           : Left Analog Stick (Up, Down, Left, Right)")
+    print("  7 8 9 0        : Right Analog Stick (Left, Up, Right, Down)")
     print("  Arrow Keys     : D-Pad (Up, Down, Left, Right)")
     print("  I              : X (Top Face Button)")
     print("  J              : Y (Left Face Button)")
@@ -126,6 +143,7 @@ def main():
     print("  P              : ZR Trigger (R2)")
     print("  N / M          : Start (+) / Select (-)")
     print("  Z / X          : L3 / R3 Stick Clicks")
+    print("  H / C          : Home / Capture")
     print("  ESC            : Exit Bridge")
     print("------------------------------------------")
     print("[+] SILENT GAMEPLAY MODE ACTIVE.")
@@ -173,7 +191,14 @@ def main():
             if is_key_down(VK_W): ly = 0
             elif is_key_down(VK_S): ly = 255
 
-            rx = 128
+            # Right Analog Stick (7/8/9/0)
+            rx, ry = 128, 128
+            if is_key_down(VK_7): rx = 0
+            elif is_key_down(VK_9): rx = 255
+
+            if is_key_down(VK_8): ry = 0
+            elif is_key_down(VK_0): ry = 255
+
             buttons = 0
 
             # 2. D-Pad Calculations (Arrow Keys)
@@ -202,11 +227,19 @@ def main():
             if is_key_down(VK_Z): buttons |= SPI_MASK_L3  # L3 Click
             if is_key_down(VK_X): buttons |= SPI_MASK_R3  # R3 Click
 
+            # Home / Capture (H / C) - these live in the flags byte
+            aux = 0
+            if is_key_down(VK_H): aux |= SPI_AUX_MASK_HOME
+            if is_key_down(VK_C): aux |= SPI_AUX_MASK_CAPTURE
+
             # 3. Transmit packet over USB serial with write timeout protection
             try:
-                packet = make_serial_packet(args.target, buttons, lx, ly, rx)
+                packet = make_serial_packet(args.target, buttons, lx, ly, rx, ry, aux)
                 ser.write(packet)
-                ser.flush()
+                # No flush() here. pyserial's Windows flush() is an unbounded
+                # busy-wait on the OS output queue (no timeout, write_timeout
+                # does not apply), which adds latency and jitter to every poll
+                # and can block outright if the device stalls.
                 total_sent += 1
             except Exception:
                 time.sleep(0.01)
@@ -221,7 +254,12 @@ def main():
             except Exception:
                 pass
 
-            time.sleep(0.02) # 50 Hz loop (20 ms interval)
+            # 500 Hz loop. This was 20ms (50 Hz), which by itself put up to
+            # 20ms of latency on every input - far more than the whole SPI
+            # path, which delivers a packet every 1ms. The master polls at
+            # 1kHz, so feeding it faster than 50 Hz is what actually makes
+            # the controller feel responsive.
+            time.sleep(0.002)
 
     except KeyboardInterrupt:
         print("\n[+] Interrupted.")

@@ -215,9 +215,26 @@ These do not cause the freeze but they make it far worse to diagnose and to live
    `MISO DIAG` lines are re-printed every 30 ms throughout it.
 5. **`MAX_CONSECUTIVE_UNACK`** (`main.cpp:8`) is dead code.
 6. **Packet structs are duplicated** in `host-src/include/packet.h` and
-   `GP2040-CE-SPI/headers/drivers/spi/spiinputdriver.h` with nothing enforcing agreement.
-   Packets must stay **exactly 8 bytes** (the PL022 FIFOs are 8 entries deep; a 9-byte
-   packet underruns/overruns them and breaks the link outright).
+   `GP2040-CE-SPI/headers/drivers/spi/spiinputdriver.h`. They now carry a `static_assert`
+   that the command and ACK packets are the same size (a synchronous SPI transfer clocks
+   equal byte counts both ways), but nothing enforces that the two *files* agree — always
+   flash master and slave as a matched pair.
+
+### Correction: the "8 byte hard limit" was wrong
+
+An earlier revision of this document asserted that packets could never exceed 8 bytes,
+because the PL022 FIFOs are 8 entries deep. **That was an inference, never tested, and it
+was wrong.** It came from misattributing this freeze to a 9-byte Home-button packet; the
+freeze was in fact the `__wfe()` halt above, which is unrelated to packet size.
+
+The packet is now **9 bytes** and works. The FIFO is 8 entries, but there is also a
+transmit shift register, so 9 bytes fit. The master's `spi_transfer_with_timeout()` already
+handled arbitrary lengths (it interleaves push and pop under
+`rx_remaining < tx_remaining + fifo_depth`), and the slave drains RX continuously in its
+tight loop. The only genuinely marginal spot was `fill_tx_fifo()` writing 9 bytes after a
+single `TFE` test — if the shift register happened to be busy, the 9th write would be
+silently dropped, truncating the CRC off every ACK. That now waits on `TNF` before each
+write, with a bounded 50 µs deadline so it cannot hang when the master goes quiet.
 
 ## How to verify the fix
 

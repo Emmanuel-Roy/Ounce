@@ -24,7 +24,10 @@ void spi_master_init() {
     // Hard reset the SPI peripheral (bounded - see spi_master_reset_hw)
     spi_master_reset_hw(2000);
 
-    spi_init(SPI_PORT, 1 * 1000 * 1000);
+    // 4MHz. The RP2040 slave samples SCK with its peripheral clock and needs
+    // f_peri/12 headroom (125MHz/12 ~= 10MHz), so this is well inside spec on
+    // both ends. Must match the slave's spi_init() exactly.
+    spi_init(SPI_PORT, 4 * 1000 * 1000);
     spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);  // Mode 1
 
     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
@@ -47,12 +50,14 @@ void spi_master_send_packet(uint8_t slave_index, const ControllerSpiPacket& pack
     spi_master_transceive_packet(slave_index, packet, ack_dummy);
 }
 
+// Only the first SPI_ACK_VALID_BYTES are real (see packet.h); the trailing pad
+// byte is untransmitted garbage, so never shift it into the CRC-covered range.
 static void normalize_ack_stream(ControllerSpiAckPacket &ack) {
     uint8_t *buf = reinterpret_cast<uint8_t*>(&ack);
-    for (size_t i = 0; i < sizeof(ControllerSpiAckPacket) - 1; i++) {
+    for (size_t i = 0; i < SPI_ACK_VALID_BYTES - 1; i++) {
         buf[i] = (buf[i] << 1) | (buf[i + 1] >> 7);
     }
-    buf[sizeof(ControllerSpiAckPacket) - 1] <<= 1;
+    buf[SPI_ACK_VALID_BYTES - 1] <<= 1;
 }
 
 // spi_write_read_blocking() (and a bare spi_is_readable() drain loop) poll the
