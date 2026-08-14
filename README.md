@@ -16,9 +16,30 @@ All host-side tools live in `tools/`.
 | --- | --- |
 | `test_bridge.py` | The bridge. Reads a keyboard and/or physical controllers and drives up to 4 virtual Switch Pro Controllers. |
 | `wiring_test.py` | Verifies the SPI wiring, identifies which physical board is which slot, and maps slots to USB devices. |
-| `steam.bat` | Launches the bridge under Steam Input, so a Steam Controller can be configured through Steam's own layout editor. |
+| `bridge.bat` | Launcher for the bridge. Double-click it, or add it to Steam so Steam Input presents a Steam Controller as a normal gamepad. |
 
 ### Driving the controllers
+
+Run it with no arguments and it asks which input drives each virtual
+controller:
+
+```text
+Detected inputs:
+   1) PS5 Controller
+   k) Keyboard
+   d) Disabled
+
+  Controller 1 (slot 0) : 1
+  Controller 2 (slot 1) : k
+  Controller 3 (slot 2) : d
+  Controller 4 (slot 3) : k
+```
+
+Only real controllers are listed — the Ounce's own targets are filtered out,
+since using one as an input would feed our own output back in. Prompting is
+skipped automatically when input is not a terminal, so scripts never block.
+
+Everything can also be driven from flags:
 
 ```bash
 # keyboard drives all four players
@@ -61,29 +82,28 @@ simply "the board on CS GP26" and may well appear third or fourth in Windows.
 
 ### Steam Controller / Steam Input
 
-Steam only applies Steam Input to processes **it launches itself**, so the
-bridge has to be started from Steam — running it from a terminal gives you the
-raw controller with no Steam remapping.
+Outside Steam, a Steam Controller is a keyboard/mouse device — there is no
+gamepad for anything to detect. Steam Input is what turns it into a virtual
+gamepad, and Steam only does that for processes **it launches itself**. So:
 
-1. **Steam → Games → Add a Non-Steam Game → Browse** → select `tools/steam.bat`
+1. **Steam → Games → Add a Non-Steam Game → Browse** → select `tools/bridge.bat`
 2. Right-click it in your library → **Properties → Controller** →
-   set *Override* to **Enable Steam Input**
-3. **Properties → Controller → Edit Layout** → configure the Steam Controller
-   however you like (this is the whole point — Steam does the remapping, the
-   bridge just receives the result)
-4. Optionally set **Launch Options**, which are forwarded to `test_bridge.py`:
-   ```
-   --assign 0=pad --assign 1,2,3=keyboard
-   ```
-5. Launch it from Steam
+   **Enable Steam Input**
+3. **Properties → Controller → Edit Layout** → bind the sticks to
+   **Joystick Move**, *not* D-Pad (see below)
+4. Launch it from Steam — a console opens and the controller appears in the
+   list like any other pad, so you can assign it to a slot as normal
 
-That default drives player 1 from the Steam Controller and players 2–4 from the
-keyboard. `--assign 0=pad` with no name means "first usable controller", which
-is what you want here since Steam's virtual pad has an unpredictable name.
+**Bind sticks to Joystick Move.** Several of Steam's non-Steam-game templates
+map a thumbstick to D-Pad, which reduces it to eight directions *before* the
+bridge ever sees it. The analog range is gone at that point and nothing on this
+side can recover it. To check what Steam is actually sending, set Launch
+Options to `--probe` and watch whether stick motion moves the `AXES` values
+(good) or the `HATS` values (stick is bound to D-Pad).
 
-`steam.bat` sets `SDL_JOYSTICK_HIDAPI_STEAM=0` deliberately. Left on, SDL talks
-to the Steam Controller directly over HID and **bypasses Steam Input entirely**,
-so the layout you configured would silently do nothing.
+`bridge.bat` sets `SDL_JOYSTICK_HIDAPI_STEAM=0` deliberately. Left on, SDL
+talks to the Steam Controller directly over HID and **bypasses Steam Input
+entirely**, so the layout you configured would silently do nothing.
 
 ## Directory Structure
 
@@ -98,7 +118,7 @@ Ounce/
 ├── tools/                                <-- Host-side tools (see Tools above)
 │   ├── test_bridge.py                    <-- The bridge
 │   ├── wiring_test.py                    <-- Wiring / slot-mapping diagnostics
-│   ├── steam.bat                         <-- Launch under Steam Input
+│   ├── bridge.bat                        <-- Launcher (works via Steam too)
 │   ├── auto_flasher.py
 │   └── auto_debugger.py
 ├── src/                                  <-- Top-level Application & Host Source

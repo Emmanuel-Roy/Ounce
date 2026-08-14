@@ -145,6 +145,134 @@ def write_default_config(path):
         json.dump(cfg, f, indent=2)
 
 
+def probe_input(seconds=60.0):
+    """Live dump of whatever a controller is actually sending.
+
+    Useful under Steam Input, where what reaches us is whatever the Steam
+    layout produces - not the physical device. If a thumbstick shows up in the
+    HAT/D-pad row instead of the AXES row, the Steam layout has that stick
+    bound to D-Pad rather than Joystick Move, and that has to be fixed in
+    Steam's layout editor; nothing on this side can recover a stick's analog
+    range once Steam has already reduced it to eight directions."""
+    if not gamepad_available():
+        return
+    pads = list_real_pads()
+    if not pads:
+        # Fall back to raw joysticks: under Steam the virtual pad may not have
+        # a GameController mapping yet, and we still want to see it.
+        pads = [(i, _pg.joystick.Joystick(i).get_name())
+                for i in range(_pg.joystick.get_count())
+                if _pg.joystick.Joystick(i).get_name().strip().lower()
+                not in OUNCE_SELF_NAMES]
+    if not pads:
+        print("[-] No non-Ounce controller detected.")
+        print("    Under Steam this usually means Steam Input is not enabled for")
+        print("    this shortcut, so the pad is still in Desktop (keyboard/mouse)")
+        print("    mode. Properties -> Controller -> Enable Steam Input.")
+        return
+
+    idx, name = pads[0]
+    j = _pg.joystick.Joystick(idx)
+    j.init()
+    mapped = _sdl_controller.is_controller(idx)
+    print(f"\n[+] Probing [{idx}] {name}")
+    print(f"    axes={j.get_numaxes()} buttons={j.get_numbuttons()} hats={j.get_numhats()}")
+    print(f"    SDL GameController mapping: {'yes' if mapped else 'NO'}")
+    print("\n    Move the sticks. If stick motion appears under HATS instead of")
+    print("    AXES, the Steam layout has it bound to D-Pad, not Joystick Move.")
+    print("    Ctrl-C to stop.\n")
+
+    t0 = time.monotonic()
+    try:
+        while time.monotonic() - t0 < seconds:
+            _pg.event.pump()
+            axes = [round(j.get_axis(i), 2) for i in range(j.get_numaxes())]
+            hats = [j.get_hat(i) for i in range(j.get_numhats())]
+            btns = [i for i in range(j.get_numbuttons()) if j.get_button(i)]
+            sys.stdout.write("\r  AXES %-44s HATS %-14s BTN %-18s"
+                             % (axes, hats, btns))
+            sys.stdout.flush()
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        pass
+    print("\n")
+
+
+def list_real_pads():
+    """Controllers that are not our own emulated targets.
+
+    The Ounce slaves enumerate as Switch Pro Controllers, so they show up in
+    the same list as real hardware; offering them as inputs would just feed our
+    own output back in."""
+    if not gamepad_available():
+        return []
+    out = []
+    for i in range(_pg.joystick.get_count()):
+        name = _pg.joystick.Joystick(i).get_name()
+        if name.strip().lower() in OUNCE_SELF_NAMES:
+            continue
+        if not _sdl_controller.is_controller(i):
+            continue      # no SDL mapping -> its buttons would be arbitrary
+        out.append((i, name))
+    return out
+
+
+def prompt_slot_assignments():
+    """Ask which input drives each virtual controller.
+
+    Returns {slot: [(kind, ref)]} using the same shape parse_assignment gives,
+    or None if the user aborted."""
+    pads = list_real_pads()
+
+    print("\n" + "=" * 60)
+    print("  Ounce - assign an input to each virtual controller")
+    print("=" * 60)
+    print("\nDetected inputs:")
+    for n, (idx, name) in enumerate(pads, start=1):
+        print(f"   {n}) {name}")
+    if not pads:
+        print("   (no controllers detected - keyboard only)")
+    print("   k) Keyboard")
+    print("   d) Disabled")
+    print("\nThe same input may drive several slots. Press Enter to disable.\n")
+
+    chosen = {}
+    for slot in range(NUM_SLOTS):
+        while True:
+            try:
+                raw = input(f"  Controller {slot + 1} (slot {slot}) : ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n[-] Aborted.")
+                return None
+            if raw in ("", "d", "disable", "disabled", "n", "none"):
+                break
+            if raw in ("k", "kb", "key", "keyboard"):
+                chosen[slot] = [("keyboard", None)]
+                break
+            if raw.isdigit() and 1 <= int(raw) <= len(pads):
+                chosen[slot] = [("pad", str(pads[int(raw) - 1][0]))]
+                break
+            print("     ? enter a number from the list, 'k', or 'd'")
+
+    if not chosen:
+        print("\n[-] Every slot disabled - nothing to drive.")
+        return None
+
+    print("\n  Summary:")
+    for slot in range(NUM_SLOTS):
+        if slot not in chosen:
+            print(f"    Controller {slot + 1} (slot {slot}) : disabled")
+            continue
+        kind, ref = chosen[slot][0]
+        if kind == "keyboard":
+            label = "Keyboard"
+        else:
+            label = next((nm for i, nm in pads if str(i) == ref), f"pad {ref}")
+        print(f"    Controller {slot + 1} (slot {slot}) : {label}")
+    print()
+    return chosen
+
+
 def parse_assignment(spec):
     """Parse one 'SLOT=SOURCE' assignment into ([slots], source).
 
@@ -593,6 +721,14 @@ def main():
                         help="Controller index for legacy single-slot mode (see --list-controllers).")
     parser.add_argument("--list-controllers", action="store_true",
                         help="List detected controllers and exit.")
+    parser.add_argument("--probe", action="store_true",
+                        help="Show live axis/button/hat values from the controller and "
+                             "exit. Run this through Steam to see what Steam Input is "
+                             "actually sending.")
+    parser.add_argument("--no-interactive", action="store_true",
+                        help="Skip the interactive slot setup and use the legacy "
+                             "single-slot default. Prompting is skipped automatically "
+                             "when input is not a terminal.")
     parser.add_argument("--deadzone", type=int, default=3000,
                         help="Stick deadzone in SDL axis units (0..32767). Default 3000.")
     parser.add_argument("--trigger-threshold", type=float, default=0.5,
@@ -603,6 +739,10 @@ def main():
         write_default_config(args.dump_config)
         print(f"[+] Wrote default config to {args.dump_config}")
         print("    Edit it, then run with --config " + args.dump_config)
+        sys.exit(0)
+
+    if args.probe:
+        probe_input()
         sys.exit(0)
 
     if args.list_controllers:
@@ -653,6 +793,27 @@ def main():
                 slot_sources.setdefault(slot, []).append(
                     ("pad", (c, merged), f"[{idx}] {name}"
                      + (f" (+{len(pad_over)} rebinds)" if pad_over else "")))
+    elif not args.assign and not args.no_interactive and sys.stdin.isatty():
+        # Run bare from a terminal: ask which input drives each virtual
+        # controller. Skipped when piped/redirected (scripts, Steam) so
+        # automation never blocks on a prompt.
+        chosen = prompt_slot_assignments()
+        if chosen is None:
+            sys.exit(1)
+        for slot, entries in chosen.items():
+            for kind, ref in entries:
+                if kind == "keyboard":
+                    slot_sources.setdefault(slot, []).append(
+                        ("keyboard", dict(DEFAULT_KEYBOARD_BINDINGS), "keyboard"))
+                else:
+                    idx = resolve_pad(ref)
+                    if idx is None:
+                        print(f"[-] Controller '{ref}' vanished before start.")
+                        sys.exit(1)
+                    c, name = open_pad_once(idx)
+                    slot_sources.setdefault(slot, []).append(
+                        ("pad", (c, dict(DEFAULT_PAD_BUTTONS)), f"[{idx}] {name}"))
+
     elif args.assign:
         for spec in args.assign:
             try:
