@@ -78,7 +78,23 @@ int main() {
     uint32_t loop_count = 0;
     absolute_time_t next_frame = get_absolute_time();
 
+    // Loop timing instrumentation. The loop was measured running at ~847Hz
+    // against a 500us target, i.e. a ~1.18ms body, and the known costs (CS
+    // setup/hold, the transfer, the bounded drain) only account for ~330us.
+    // These accumulators attribute the rest to a specific phase.
+    uint32_t prof_usb = 0, prof_spi = 0, prof_body = 0, prof_max = 0, prof_n = 0;
+    uint32_t body_start = time_us_32();
+
     while (true) {
+        {
+            uint32_t body = time_us_32() - body_start;
+            if (prof_n) {                      // skip the first, partial pass
+                prof_body += body;
+                if (body > prof_max) prof_max = body;
+            }
+            body_start = time_us_32();
+        }
+
         // Service TinyUSB ourselves, once per loop, as the ONLY caller.
         // PICO_STDIO_USB_ENABLE_IRQ_BACKGROUND_TASK is disabled (see
         // CMakeLists.txt) specifically so nothing else ever calls tud_task()
@@ -88,7 +104,9 @@ int main() {
         // SDK's own mutex.h warns against blocking mutex calls from an IRQ
         // handler) and was the actual cause of this firmware's intermittent
         // full hangs. Single-context polling removes the race entirely.
+        uint32_t t_mark = time_us_32();
         tud_task();
+        prof_usb += time_us_32() - t_mark;
 
         uint32_t now = to_ms_since_boot(get_absolute_time());
 
@@ -149,7 +167,9 @@ int main() {
 		} else {
 			for (int i = 0; i < 1; i++) { // ONLY Target 0
 				packets[i].crc8 = calculate_crc8(reinterpret_cast<const uint8_t*>(&packets[i]), 8);
+				uint32_t t_spi = time_us_32();
 				ack_status[i] = spi_master_transceive_packet(i, packets[i], ack_packets[i]);
+				prof_spi += time_us_32() - t_spi;
 
 				if (ack_status[i]) {
 					consecutive_unack_count[i] = 0;
@@ -187,6 +207,22 @@ int main() {
 		}
 
 		loop_count++;
+
+		// Report the timing breakdown roughly once a second. "body" is the
+		// whole iteration including the pacing wait, so body minus usb minus
+		// spi is everything else (CDC reads, the neutralize scan, printing,
+		// and the busy_wait_until pacing itself).
+		prof_n++;
+		if (prof_n >= 1000) {
+			cdc_printf(" << T body=%lu usb=%lu spi=%lu max=%lu\n",
+				   (unsigned long)(prof_body / prof_n),
+				   (unsigned long)(prof_usb / prof_n),
+				   (unsigned long)(prof_spi / prof_n),
+				   (unsigned long)prof_max);
+			prof_body = prof_usb = prof_spi = prof_max = 0;
+			prof_n = 0;
+		}
+
 		if (loop_count % 30 == 0) {
 			for (int i = 0; i < 1; i++) {   // ONLY Target 0
 				if (ack_status[i]) {
