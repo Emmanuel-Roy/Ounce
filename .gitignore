@@ -15,7 +15,7 @@ __pycache__/
 # VS Code local history, previously committed here by accident
 .history/
 
-# Captured video and input logs, written beside the client
+# Captured video and input logs (bin/recordings, one level above the exe)
 recordings/
 
 # bin/OunceClient/ is committed deliberately - the point of bin/ is that you can

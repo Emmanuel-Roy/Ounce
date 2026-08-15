@@ -110,9 +110,19 @@ def app_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def recordings_root():
+    """recordings\\ one level above the client.
+
+    Above rather than beside: build_exe.bat runs PyInstaller with --noconfirm,
+    which wipes the whole OunceClient folder on every rebuild. Keeping takes
+    one level up means rebuilding the client cannot delete them.
+    """
+    return os.path.join(os.path.dirname(app_dir()), "recordings")
+
+
 def new_recording_dir():
-    """A fresh timestamped folder in recordings\\ beside the client."""
-    path = os.path.join(app_dir(), "recordings", time.strftime("%Y-%m-%d_%H-%M-%S"))
+    """A fresh timestamped folder for one recording."""
+    path = os.path.join(recordings_root(), time.strftime("%Y-%m-%d_%H-%M-%S"))
     os.makedirs(path, exist_ok=True)
     return path
 

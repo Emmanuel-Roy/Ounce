@@ -174,7 +174,7 @@ can feed the window.
 ## Recording
 
 **Rec** on the toolbar starts and stops a recording. Each one is a folder in
-`recordings\` beside the client, named for when it started and how long it ran
+`bin\recordings\`, named for when it started and how long it ran
 (`2026-08-14_21-30-05_3m12s`), containing:
 
 ```
