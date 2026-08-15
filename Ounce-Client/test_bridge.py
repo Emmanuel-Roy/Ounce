@@ -45,8 +45,6 @@ VK_0 = 0x30  # Right Stick Down
 VK_H = 0x48  # Home
 VK_C = 0x43  # Capture
 
-VK_ESC = 0x1B # Exit Bridge
-
 # SPI Button Mask Definitions matching GP2040-CE logical mapping
 SPI_MASK_UP    = (1 << 0)
 SPI_MASK_DOWN  = (1 << 1)
@@ -2391,7 +2389,7 @@ def main():
         print("  Z / X          : L3 / R3 Stick Clicks")
         print("  H / C          : Home / Capture")
         print("  (--dump-config writes this out as an editable file)")
-    print("  ESC            : Exit Bridge")
+    print("  Close the window (or Ctrl+C) to exit.")
     print("------------------------------------------")
     if opened_pads:
         print("[+] Pads: Guide = Home, Share/Capture = Capture.")
@@ -2717,10 +2715,10 @@ def main():
 
     try:
         while True:
-            if is_key_down(VK_ESC):
-                print("\n[+] Exiting test bridge.")
-                break
-
+            # Esc deliberately does NOT quit. It is a normal game key and it
+            # also leaves fullscreen and cancels a pending rebind, so quitting
+            # on it meant an in-game press could close the bridge mid-session.
+            # Closing is the window's X, or Ctrl+C from a console.
             if args.max_packets > 0 and total_sent >= args.max_packets:
                 print("\n[+] Reached maximum packet limit of %d. Exiting." % args.max_packets)
                 break
