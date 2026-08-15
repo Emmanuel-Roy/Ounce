@@ -530,59 +530,6 @@ def read_keyboard_mapped(bindings):
     return (buttons, axes[0], axes[1], axes[2], axes[3], aux)
 
 
-def read_keyboard():
-    """Read the default keyboard map into (buttons, lx, ly, rx, ry, aux)."""
-    # Left Analog Stick (WASD)
-    lx, ly = 128, 128
-    if is_key_down(VK_A): lx = 0
-    elif is_key_down(VK_D): lx = 255
-
-    if is_key_down(VK_W): ly = 0
-    elif is_key_down(VK_S): ly = 255
-
-    # Right Analog Stick (7/8/9/0)
-    rx, ry = 128, 128
-    if is_key_down(VK_7): rx = 0
-    elif is_key_down(VK_9): rx = 255
-
-    if is_key_down(VK_8): ry = 0
-    elif is_key_down(VK_0): ry = 255
-
-    buttons = 0
-
-    # D-Pad (Arrow Keys)
-    if is_key_down(VK_UP):    buttons |= SPI_MASK_UP
-    if is_key_down(VK_DOWN):  buttons |= SPI_MASK_DOWN
-    if is_key_down(VK_LEFT):  buttons |= SPI_MASK_LEFT
-    if is_key_down(VK_RIGHT): buttons |= SPI_MASK_RIGHT
-
-    # Face Buttons (I=X, J=Y, K=B, L=A)
-    if is_key_down(VK_I): buttons |= SPI_MASK_B4  # X (Top)
-    if is_key_down(VK_J): buttons |= SPI_MASK_B3  # Y (Left)
-    if is_key_down(VK_K): buttons |= SPI_MASK_B1  # B (Bottom)
-    if is_key_down(VK_L): buttons |= SPI_MASK_B2  # A (Right)
-
-    # Bumpers & Triggers (Y=L2/ZL, U=L1/L, O=R1/R, P=R2/ZR)
-    if is_key_down(VK_Y): buttons |= SPI_MASK_L2
-    if is_key_down(VK_U): buttons |= SPI_MASK_L1
-    if is_key_down(VK_O): buttons |= SPI_MASK_R1
-    if is_key_down(VK_P): buttons |= SPI_MASK_R2
-
-    # Start & Select (N / M)
-    if is_key_down(VK_N): buttons |= SPI_MASK_S2  # Start (+)
-    if is_key_down(VK_M): buttons |= SPI_MASK_S1  # Select (-)
-
-    # Stick Clicks (Z / X)
-    if is_key_down(VK_Z): buttons |= SPI_MASK_L3
-    if is_key_down(VK_X): buttons |= SPI_MASK_R3
-
-    # Home / Capture (H / C) - these live in the flags byte
-    aux = 0
-    if is_key_down(VK_H): aux |= SPI_AUX_MASK_HOME
-    if is_key_down(VK_C): aux |= SPI_AUX_MASK_CAPTURE
-
-    return buttons, lx, ly, rx, ry, aux
-
 
 # --------------------------------------------------------------------------
 # Physical controller input (DualSense / Steam Controller / XInput / etc.)
@@ -1124,12 +1071,6 @@ class VlcPreview:
                 self._player.video_set_aspect_ratio(None)
         except Exception:
             pass
-
-    def source_size(self):
-        try:
-            return self._player.video_get_size(0)
-        except Exception:
-            return (0, 0)
 
     def is_playing(self):
         try:

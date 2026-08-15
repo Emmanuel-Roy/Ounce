@@ -5,7 +5,10 @@
 #include "spi_master.h"
 #include "tusb.h"
 
-#define MAX_CONSECUTIVE_UNACK 1000
+// Polls a target may ACK with an unchanging packet_count before we treat it as
+// wedged and reset it. At the 1kHz poll rate this is 20ms of a slave answering
+// without actually processing anything.
+#define FROZEN_COUNT_LIMIT 20
 
 uint16_t last_seen_count[4] = {0};
 uint32_t frozen_count_streak[4] = {0};
@@ -229,7 +232,7 @@ int main() {
 
 				if (ack_packets[i].packet_count == last_seen_count[i]) {
 					frozen_count_streak[i]++;
-					if (frozen_count_streak[i] >= 20) {
+					if (frozen_count_streak[i] >= FROZEN_COUNT_LIMIT) {
 						cdc_printf(" << RECOVER T%d frozen c=%u pause 100ms\n",
 							   i, ack_packets[i].packet_count);
 						gpio_put(CS_PINS[i], 1);
