@@ -29,7 +29,7 @@ Capture card is optional — run with `--no-preview` for input only.
 
 ```
 bin/               Flash these: OunceMaster.uf2, OunceServant.uf2, OunceClient/
-Ounce-Client/      Windows client: test_bridge.py, wiring_test.py, bridge.bat, build_exe.bat
+Ounce-Client/      Windows client: test_bridge.py, wiring_test.py, build_exe.bat
 Ounce-Hardware/    master-firmware/, servant-firmware/, pcb/, pico-sdk/
 ```
 
@@ -188,8 +188,10 @@ Sticks bound to D-Pad are cut to eight directions before Ounce sees them and the
 analog range cannot be recovered. Set Launch Options to `--probe` to check:
 motion should move `AXES`, not `HATS`.
 
-`bridge.bat` sets `SDL_JOYSTICK_HIDAPI_STEAM=0` on purpose — left on, SDL grabs
-the pad over HID and bypasses Steam Input entirely.
+The client sets `SDL_JOYSTICK_HIDAPI_STEAM` for you — `0` under Steam, `1`
+otherwise. Left at SDL's default under Steam, SDL would talk to the pad
+directly over HID and bypass Steam Input entirely, so the layout you configured
+would silently do nothing.
 
 **Parsec** controllers arrive as ordinary XInput pads, so they need none of the
 above — they appear in the input list by themselves and can be assigned to a
