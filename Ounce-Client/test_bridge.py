@@ -102,6 +102,91 @@ def default_config():
     }
 
 
+def app_dir():
+    """The folder the client is running from - next to the exe when frozen,
+    next to the script when run from source."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def new_recording_dir():
+    """A fresh timestamped folder in recordings\\ beside the client."""
+    path = os.path.join(app_dir(), "recordings", time.strftime("%Y-%m-%d_%H-%M-%S"))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def finish_recording_dir(path, seconds):
+    """Append the length to the folder name, now that it is known.
+
+    The name cannot carry the length when the folder is created, so the
+    rename happens on stop. Returns wherever the recording ended up.
+    """
+    secs = int(round(seconds))
+    length = f"{secs // 60}m{secs % 60:02d}s" if secs >= 60 else f"{secs}s"
+    target = f"{path}_{length}"
+    try:
+        os.rename(path, target)
+        return target
+    except Exception as e:
+        # Renaming can fail if anything still holds the folder open. The
+        # recording itself is fine, so keep it under the original name.
+        print(f"[-] Could not rename recording folder ({e}); left at {path}")
+        return path
+
+
+class InputRecorder:
+    """Logs what each virtual controller was sent, one CSV per controller.
+
+    Split per controller rather than one interleaved file because the point is
+    to see what a given player did; a merged log would have to be demultiplexed
+    before it could be read or plotted.
+
+    Timestamps are milliseconds from the start of the recording, so they line
+    up with the video in the same folder.
+    """
+
+    HEADER = "t_ms,buttons,lx,ly,rx,ry,aux\n"
+
+    def __init__(self, directory):
+        self.dir = directory
+        self._files = {}
+        self._t0 = time.monotonic()
+        self.rows = 0
+
+    def log(self, slot, buttons, lx, ly, rx, ry, aux):
+        f = self._files.get(slot)
+        if f is None:
+            try:
+                f = open(os.path.join(self.dir, f"controller{slot + 1}.csv"),
+                         "w", encoding="utf-8", newline="")
+            except Exception as e:
+                print(f"[-] Cannot log controller {slot + 1}: {e}")
+                self._files[slot] = False
+                return
+            f.write(self.HEADER)
+            self._files[slot] = f
+        elif f is False:                     # already failed; do not retry
+            return
+        f.write("%d,0x%04X,%d,%d,%d,%d,0x%02X\n" %
+                (int((time.monotonic() - self._t0) * 1000),
+                 buttons, lx, ly, rx, ry, aux))
+        self.rows += 1
+
+    def elapsed(self):
+        return time.monotonic() - self._t0
+
+    def close(self):
+        for f in self._files.values():
+            if f:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+        self._files.clear()
+
+
 def keymap_store_path():
     """Where the in-app keyboard remapper persists its bindings.
 
@@ -820,6 +905,7 @@ class Toolbar:
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
         self.capture_action = None   # action awaiting a keypress, if any
+        self.recording = False       # drives the record button's appearance
 
     def set_sources(self, devices, modes, device, mode):
         self.devices = devices
@@ -866,6 +952,20 @@ class Toolbar:
                       rect, border_radius=4)
         surface.blit(txt, (rect.x + 8, rect.y + 3))
         self._hit.append((rect, "open", "root"))
+
+        # Record sits on the strip rather than in the dropdown: it is the one
+        # control you need to hit immediately and read the state of at a
+        # glance, which a collapsed menu cannot give you.
+        rcap = "Stop" if self.recording else "Rec"
+        rtxt = f.render(rcap, True, (255, 235, 235) if self.recording
+                        else (230, 230, 240))
+        rrect = _pg.Rect(rect.right + 6, 3, rtxt.get_width() + 30, TOOLBAR_H - 6)
+        _pg.draw.rect(surface, (150, 40, 44) if self.recording else (40, 40, 50),
+                      rrect, border_radius=4)
+        _pg.draw.circle(surface, (235, 70, 70), (rrect.x + 12, rrect.centery), 5)
+        surface.blit(rtxt, (rrect.x + 22, rrect.y + 3))
+        self._hit.append((rrect, "record", not self.recording))
+        rect = rrect                 # what the summary is positioned after
 
         # Live summary next to the button, so the common case needs no clicks.
         on = [f"P{s + 1}" for s in range(NUM_SLOTS) if self.slots.get(s) is not None]
@@ -1096,10 +1196,12 @@ class VlcPreview:
             cls._instances[bool(hdr)] = inst
         return inst
 
-    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None, hdr=False):
+    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None, hdr=False,
+                 record_path=None):
         self.error = None
         self._player = None
         self._inst = None
+        self.record_path = record_path
         try:
             import vlc
         except Exception:
@@ -1129,6 +1231,21 @@ class VlcPreview:
                 chroma = {"mjpeg": "MJPG", "mjpg": "MJPG"}.get(pixfmt.lower())
                 if chroma:
                     opts.append(f":dshow-chroma={chroma}")
+            if record_path:
+                # duplicate{} so the same stream both draws and writes. libvlc
+                # 3.x has no record() call (that is 4.x), and the card cannot
+                # be opened a second time by a separate recorder, so the split
+                # has to happen inside this pipeline.
+                #
+                # No transcode: the frames are written in the codec they arrive
+                # in. Re-encoding 4K60 in software would not keep up and would
+                # cost picture quality for a recording that is meant to be a
+                # faithful record. AVI because it carries MJPEG - what the high
+                # modes actually deliver - without repackaging.
+                dst = record_path.replace("\\", "/")
+                opts += [":sout=#duplicate{dst=display,dst=std{access=file,"
+                         'mux=avi,dst="%s"}}' % dst,
+                         ":sout-keep"]
             media = self._inst.media_new(mrl, *opts)
             self._player.set_media(media)
             self._player.set_hwnd(hwnd)       # render into the pygame window
@@ -2341,6 +2458,7 @@ def main():
     if _window is not None:
         toolbar.set_inputs(list_real_pads(), _slot_state())
         toolbar.keymap = live_keymap      # edited in place by the remap screen
+    recorder = None                       # InputRecorder while recording
 
     total_sent = 0
     last_paint = 0.0
@@ -2398,6 +2516,55 @@ def main():
             # "reset all" put the defaults back; persist that too, or the old
             # remaps would return on the next launch.
             save_keymap(live_keymap)
+            return
+
+        if kind == "record":
+            nonlocal recorder
+            aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+            if value:                                  # start
+                # Frames are written in the codec they arrive in, so a raw
+                # capture mode records raw: 1080p60 NV12 is ~180MB/s, which
+                # fills a disk in minutes. Worth saying before it happens
+                # rather than after.
+                if toolbar.mode and toolbar.mode[3].lower() not in ("mjpeg", "mjpg"):
+                    w, h, fps, pixfmt = toolbar.mode
+                    print(f"[!] {pixfmt} is uncompressed - recording at roughly "
+                          f"{w * h * 1.5 * fps / 1e6:.0f} MB/s. "
+                          f"Switch to an MJPEG mode for a smaller file.")
+                d = new_recording_dir()
+                recorder = InputRecorder(d)
+                toolbar.recording = True
+                _swap_vlc(lambda: VlcPreview(
+                    _video_child, toolbar.device, aud, toolbar.mode,
+                    hdr=toolbar.hdr,
+                    record_path=os.path.join(d, "capture.avi")))
+                if vlc_preview.error:
+                    toolbar.recording = False
+                    recorder.close(); recorder = None
+                    print("[-] Recording failed to start.")
+                else:
+                    print(f"[+] Recording to {d}")
+            else:                                      # stop
+                toolbar.recording = False
+                # Tear the recording pipeline down first: the file is only
+                # finalised when VLC closes it, so the log must not be cut
+                # short before the video it is timed against.
+                _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
+                                             toolbar.mode, hdr=toolbar.hdr))
+                if recorder is not None:
+                    rows, length = recorder.rows, recorder.elapsed()
+                    recorder.close()
+                    where = finish_recording_dir(recorder.dir, length)
+                    recorder = None
+                    print(f"[+] Recording saved: {where}  "
+                          f"({rows} input rows)")
+            return
+
+        if toolbar.recording and kind in ("device", "mode", "hdr"):
+            # Restarting the stream is how the device, mode and HDR settings
+            # are applied, and that same restart truncates the file being
+            # written. Refused rather than silently losing the take.
+            print("[-] Stop recording before changing the capture settings.")
             return
 
         if kind == "slot":
@@ -2515,6 +2682,10 @@ def main():
                 except Exception:
                     time.sleep(0.01)
                     break
+                if recorder is not None:
+                    # Logged after the write, so the file only contains what
+                    # actually went to the master.
+                    recorder.log(slot, buttons, lx, ly, rx, ry, aux)
 
             # (Packets for every enabled slot were already sent above. No
             # flush() anywhere: pyserial's Windows flush() is an unbounded
@@ -2588,9 +2759,17 @@ def main():
     except Exception as e:
         print(f"\n[+] Unexpected error caught: {e}")
     finally:
+        # Stop the players before finalising, so VLC has closed the video file
+        # by the time the folder is renamed. Quitting mid-recording still
+        # leaves a complete, correctly named take rather than a stray folder.
         for obj in (capture, capture_audio, vlc_preview):
             if obj is not None:
                 obj.stop()
+        if recorder is not None:
+            rows, length = recorder.rows, recorder.elapsed()
+            recorder.close()
+            print(f"[+] Recording saved: {finish_recording_dir(recorder.dir, length)}"
+                  f"  ({rows} input rows)")
         try:
             ser.close()
         except Exception:

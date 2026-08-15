@@ -171,6 +171,27 @@ fullscreen. A mode must be requested explicitly or DirectShow hands out 640×480
 USB. The card's HDMI passthrough never reaches the PC, so only the capture path
 can feed the window.
 
+## Recording
+
+**Rec** on the toolbar starts and stops a recording. Each one is a folder in
+`recordings\` beside the client, named for when it started and how long it ran
+(`2026-08-14_21-30-05_3m12s`), containing:
+
+```
+capture.avi        video + audio from the card
+controller1.csv    what was sent to player 1
+controller3.csv    ...one file per player that was actually driven
+```
+
+The CSVs are `t_ms,buttons,lx,ly,rx,ry,aux`, timed from the start of the
+recording so they line up with the video beside them.
+
+Frames are written in the codec they arrive in — no re-encoding, since
+compressing 4K60 in software would not keep up. In an MJPEG mode that is a
+normal-sized file; in a **raw** mode it is roughly 180 MB/s, and the client
+warns you before starting one. Capture settings cannot be changed mid-recording
+because applying them restarts the stream, which would truncate the file.
+
 ## Steam Controller (Steam Input)
 
 **A Steam Controller only works if you add `OunceClient.exe` to Steam and launch
