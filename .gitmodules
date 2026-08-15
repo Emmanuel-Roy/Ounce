@@ -1,4 +1,4 @@
-[submodule "Ounce-Hardware/master-firmware/pico-sdk"]
+[submodule "Ounce-Hardware/pico-sdk"]
 	path = Ounce-Hardware/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk.git
 	branch = master
