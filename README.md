@@ -160,12 +160,19 @@ python test_bridge.py --list-controllers
 `SLOT` is `0`–`3`, a comma list, or `all`; `SOURCE` is `keyboard` or
 `pad:<index|name>` (prefer names — indices shift when devices are replugged).
 
-A pad and the keyboard can drive the same player at once. In the dropdown, pick
-a controller then tick **also use keyboard (Home / Capture)** — the pad keeps
-working and the keyboard fills in whatever it lacks. Useful because a Steam
-Controller has no Home or Capture button, and swapping the whole player over to
-the keyboard just to press one of them is worse. The setting belongs to the
-player, not the pad, so it survives changing which pad is assigned.
+A pad and the keyboard can drive the same player at once. Each player's menu
+lists the controllers first, then how much keyboard rides along with it:
+
+| Keyboard | Player gets |
+| --- | --- |
+| **Full keyboard** | every input, merged with the pad |
+| **Home / Capture only** | just those two keys; the rest of the keyboard is ignored |
+| **No keyboard** | the pad alone |
+
+**Home / Capture only** is the useful one for a Steam Controller, which has no
+Home or Capture button: you get those two without WASD also grabbing the stick
+out from under the pad. The keyboard setting belongs to the player rather than
+the pad, so changing which controller is assigned keeps it.
 
 On the Switch: **System Settings → Controllers and Sensors → Pro Controller
 Wired Communication → ON**.
