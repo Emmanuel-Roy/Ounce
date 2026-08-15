@@ -1,168 +1,220 @@
-# Ounce: Play your Switch 2 Anywhere
+# Ounce
 
-Multi-controller proxy system using a **Raspberry Pi Pico 2 (RP2350) Master** board and **4x Raspberry Pi Pico 1 (RP2040) Slave** boards over $10\text{ MHz}$ SPI (theoretically expandable to 8 controllers).
+Play your Nintendo Switch from anywhere. Four Picos each appear to the Switch as
+a real Switch Pro Controller, a fifth drives them over SPI, and a Windows client
+turns your keyboard and USB pads into those four players while showing the
+Switch's video in the same window.
 
-## Documentation
+```
+keyboard / pads -> Windows client -> USB serial -> Pico 2 W master
+                                                        |  SPI
+                                          +------+------+------+------+
+                                        Pico   Pico   Pico   Pico   -> Switch USB
+                                       player1 player2 player3 player4
+```
 
-- **[Hardware Installation & Wiring Guide](./HARDWARE_INSTALLATION_GUIDE.md)**: Hardware pinout, SPI bus connections, power, and physical board flashing.
-- **[Software & Toolchain Guide](./SOFTWARE_GUIDE.md)**: C/C++ Pico SDK toolchain installation, CMake build commands, and Python test harness.
-- **[System Architecture Plan](./SYSTEM_PLAN.md)**: System topology, 8-controller scaling, 11-byte packet memory layout, and CRC-8 specification.
+## Parts
 
-## Tools
+| Qty | Part | Purpose |
+| --- | --- | --- |
+| 1 | **Raspberry Pi Pico 2 W** (RP2350) | Master |
+| 4 | **Raspberry Pi Pico 1** (RP2040) | Servants — one per player |
+| 4 | Micro-USB cables | Servants -> Switch (powered hub into the dock) |
+| 1 | Micro-USB / USB-C cable | Master -> PC (power + serial) |
+| 1 | **Elgato capture card** (4K S or similar) | Switch video in the client window |
+| 1 | **Ounce PCB** or breadboard + jumpers | SPI bus and common ground |
 
-All host-side tools live in `tools/`.
+Capture card is optional — run with `--no-preview` for input only.
 
-| Tool | Purpose |
-| --- | --- |
-| `test_bridge.py` | The bridge. Reads a keyboard and/or physical controllers and drives up to 4 virtual Switch Pro Controllers. |
-| `wiring_test.py` | Verifies the SPI wiring, identifies which physical board is which slot, and maps slots to USB devices. |
-| `bridge.bat` | Launcher for the bridge. Double-click it, or add it to Steam so Steam Input presents a Steam Controller as a normal gamepad. |
-| `build_exe.bat` | Builds `bin/OunceBridge/OunceBridge.exe`, a standalone build that needs no Python. |
+## Layout
 
-### Capture preview
+```
+bin/               Flash these: ounce_master.uf2, GP2040-CE_0.0.0_Pico.uf2, OunceBridge/
+Ounce-Client/      Windows client: test_bridge.py, wiring_test.py, bridge.bat, build_exe.bat
+Ounce-Hardware/    master-firmware/, servant-firmware/, pcb/, pico-sdk/
+```
 
-When a window is shown (under Steam, or with `--window`) the capture card is
-drawn into that same window — so the window Steam Input needs focused is also
-the one you watch.
+## Wiring
+
+SCK and MOSI are **shared** by all four servants. CS and MISO are **one per
+servant** — an RP2040 slave does not release MISO when deselected, so four on
+one wire would fight.
+
+**Master (Pico 2 W)**
+
+| Signal | GPIO | Pin | To |
+| --- | --- | --- | --- |
+| SCK | GP18 | 24 | SCK on all servants |
+| MOSI | GP19 | 25 | MOSI (GP16) on all servants |
+| CS 0–3 | GP21, GP22, GP26, GP27 | 27, 29, 31, 32 | CS on servant 0, 1, 2, 3 |
+| MISO 0–3 | GP0, GP4, GP16, GP20 | 1, 6, 21, 26 | MISO from servant 0, 1, 2, 3 |
+| GND | GND | 3, 8, 13, 18, 23, 28, 33, 38 | GND on every servant |
+
+**Each servant (Pico 1)** — identical for all four:
+
+| Signal | GPIO | Pin | To |
+| --- | --- | --- | --- |
+| MOSI in | GP16 | 21 | master GP19 |
+| CS | GP17 | 22 | that servant's own CS pin |
+| SCK | GP18 | 24 | master GP18 |
+| MISO out | GP19 | 25 | that servant's own MISO pin |
+| GND | GND | 23, 38 | master GND |
+
+**Every board must share a ground with the master** — without it you get
+intermittent garbage rather than a clean failure. Bus is 4 MHz, SPI mode 1.
+Servants are numbered purely by which CS pin they are wired to, so any Pico
+works in any slot.
+
+Verify before going further:
 
 ```bash
-python tools/test_bridge.py --window            # 4K60 by default
-python tools/test_bridge.py --list-modes        # what the card offers
-python tools/test_bridge.py --capture-mode 1920x1080@240
-python tools/test_bridge.py --no-preview        # status only
+python Ounce-Client/wiring_test.py            # PASS/FAIL per slot
+python Ounce-Client/wiring_test.py --identify # drive one slot at a time
+python Ounce-Client/wiring_test.py --map      # slot -> board -> Windows USB device
 ```
 
-Two things are worth knowing, because both cost real quality if you get them
-wrong:
-
-- **A mode must be requested explicitly.** DirectShow hands out the *first*
-  advertised format, which on this card is 640×480. "Specify nothing" means
-  lowest, not native.
-- **The high modes are only offered as MJPEG.** Raw formats (`nv12`,
-  `yuv420p`) cap at 4K30 because uncompressed 4K60 will not fit over USB;
-  `mjpeg` is what carries 4K60, 1440p144 and 1080p240.
-
-By default VLC renders straight into the window on the GPU, so no video data
-passes through Python and the window size *is* the display resolution
-(`--window-size`). `--video-backend ffmpeg` falls back to piping raw frames,
-which caps out near 1080p. The card's HDMI passthrough is a separate hardware
-path to a display and never reaches the PC, so it cannot be shown here.
-
-### Driving the controllers
-
-Run it with no arguments and it asks which input drives each virtual
-controller:
-
-```text
-Detected inputs:
-   1) PS5 Controller
-   k) Keyboard
-   d) Disabled
-
-  Controller 1 (slot 0) : 1
-  Controller 2 (slot 1) : k
-  Controller 3 (slot 2) : d
-  Controller 4 (slot 3) : k
-```
-
-Only real controllers are listed — the Ounce's own targets are filtered out,
-since using one as an input would feed our own output back in. Prompting is
-skipped automatically when input is not a terminal, so scripts never block.
-
-Everything can also be driven from flags:
-
-```bash
-# keyboard drives all four players
-python test_bridge.py --assign all=keyboard
-
-# player 1 on a DualSense, players 2-4 on the keyboard
-python test_bridge.py --assign 0=pad:DualSense --assign 1,2,3=keyboard
-
-# only players 2 and 4 active
-python test_bridge.py --assign 1,3=keyboard
-
-python test_bridge.py --list-controllers
-```
-
-`SLOT` is a number `0`–`3`, a comma list, or `all`. `SOURCE` is `keyboard` or
-`pad:<index|name>` — prefer the name, since indices shift when devices are
-plugged or unplugged. Assigning two sources to one slot merges them. Only the
-slots you assign are enabled; the rest are disabled and never polled.
-
-To change *which* keys or pad buttons map to which Switch input, per slot:
-
-```bash
-python test_bridge.py --dump-config mymap.json   # editable starting point
-python test_bridge.py --config mymap.json
-```
-
-### Checking the wiring
-
-```bash
-python wiring_test.py              # PASS/FAIL per slot, with pins to check
-python wiring_test.py --identify   # drive one slot at a time to see which board it is
-python wiring_test.py --map        # slot -> physical board -> Windows USB device
-```
-
-`--map` is the one to reach for when you need to know which controller is
-which: each slave reports its hardware unique ID over SPI *and* uses it as its
-USB serial, so a slot resolves to a specific board and a specific device on the
-PC. **SPI slot order and USB enumeration order are unrelated** — slot 2 is
-simply "the board on CS GP26" and may well appear third or fourth in Windows.
-
-### Steam Controller / Steam Input
-
-Outside Steam, a Steam Controller is a keyboard/mouse device — there is no
-gamepad for anything to detect. Steam Input is what turns it into a virtual
-gamepad, and Steam only does that for processes **it launches itself**. So:
-
-1. **Steam → Games → Add a Non-Steam Game → Browse** → select `tools/bridge.bat`
-2. Right-click it in your library → **Properties → Controller** →
-   **Enable Steam Input**
-3. **Properties → Controller → Edit Layout** → bind the sticks to
-   **Joystick Move**, *not* D-Pad (see below)
-4. Launch it from Steam — a console opens and the controller appears in the
-   list like any other pad, so you can assign it to a slot as normal
-
-**Bind sticks to Joystick Move.** Several of Steam's non-Steam-game templates
-map a thumbstick to D-Pad, which reduces it to eight directions *before* the
-bridge ever sees it. The analog range is gone at that point and nothing on this
-side can recover it. To check what Steam is actually sending, set Launch
-Options to `--probe` and watch whether stick motion moves the `AXES` values
-(good) or the `HATS` values (stick is bound to D-Pad).
-
-`bridge.bat` sets `SDL_JOYSTICK_HIDAPI_STEAM=0` deliberately. Left on, SDL
-talks to the Steam Controller directly over HID and **bypasses Steam Input
-entirely**, so the layout you configured would silently do nothing.
-
-## Directory Structure
-
-```text
-Ounce/
-├── README.md
-├── SYSTEM_PLAN.md
-├── HARDWARE_INSTALLATION_GUIDE.md
-├── SOFTWARE_GUIDE.md
-├── .gitmodules
-├── bin/                                  <-- Prebuilt .uf2 images to flash
-├── tools/                                <-- Host-side tools (see Tools above)
-│   ├── test_bridge.py                    <-- The bridge
-│   ├── wiring_test.py                    <-- Wiring / slot-mapping diagnostics
-│   ├── bridge.bat                        <-- Launcher (works via Steam too)
-│   ├── auto_flasher.py
-│   └── auto_debugger.py
-├── src/                                  <-- Top-level Application & Host Source
-└── Hardware/
-    ├── README.md
-    ├── host-src/                         <-- RP2350 Master Firmware Source
-    └── servant-src/
-        ├── README.md
-        └── GP2040-CE-SPI/                <-- RP2040 Slave Firmware (Submodule)
-```
+SPI slot order and USB enumeration order are unrelated — slot 2 is just "the
+board on CS GP26" and may appear third or fourth in Windows.
 
 ## Flashing
 
-`bin/` holds the current images. Flash **`ounce_master.uf2`** to the RP2350
-master and **`GP2040-CE_0.0.0_Pico.uf2`** to every RP2040 slave — it is a
-single image for all four, each board learns its slot from the CS pin it is
-wired to, so any Pico works in any slot with no per-board build.
+Prebuilt images are in `bin/` — no build needed.
+
+| Board | Hold BOOTSEL, plug in, drive appears | Drag on |
+| --- | --- | --- |
+| Servants (×4) | `RPI-RP2` | `bin/GP2040-CE_0.0.0_Pico.uf2` |
+| Master | `RP2350` | `bin/ounce_master.uf2` |
+
+All four servants get the **same** file; each learns its player number from its
+CS pin.
+
+## Building
+
+```bash
+git clone --recursive https://github.com/Emmanuel-Roy/Ounce.git
+```
+
+Already cloned? `git submodule update --init --recursive`.
+
+**Master firmware** — needs CMake, Ninja and `arm-none-eabi-gcc` (the [Pico
+Windows installer](https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html)
+has all three):
+
+```bash
+cd Ounce-Hardware/master-firmware
+cmake -B build -DPICO_SDK_PATH=../pico-sdk
+cmake --build build
+```
+
+Add `-G Ninja` or `-G "MinGW Makefiles"` if CMake does not pick a generator on
+its own. Output is `build/ounce_master.uf2`.
+
+**Servant firmware** (`SKIP_WEBBUILD` avoids needing Node/npm for GP2040-CE's
+unused web configurator):
+
+```bash
+cd Ounce-Hardware/servant-firmware/GP2040-CE-SPI
+cmake -B build -DSKIP_WEBBUILD=ON
+cmake --build build
+```
+
+**Client:**
+
+```bash
+pip install -r Ounce-Client/requirements.txt
+python Ounce-Client/test_bridge.py
+```
+
+`python-vlc` is only the binding — also install VLC itself, at the same
+bit-width as your Python, or video will not start.
+
+`Ounce-Client\build_exe.bat` rebuilds `bin\OunceBridge\`. It uses `--onedir`
+deliberately: a onefile build relaunches itself as a child process, and Steam
+Input only instruments the process Steam launched. Keep the folder together —
+the exe needs `_internal\` beside it.
+
+## Running
+
+Run with no arguments and it asks what drives each player:
+
+```text
+   1) PS5 Controller     k) Keyboard     d) Disabled
+
+  Controller 1 (slot 0) : 1
+  Controller 2 (slot 1) : k
+```
+
+Ounce's own servants are filtered out of the list. Only assigned slots are
+enabled. To skip the prompt:
+
+```bash
+python test_bridge.py --assign all=keyboard
+python test_bridge.py --assign 0=pad:DualSense --assign 1,2,3=keyboard
+python test_bridge.py --list-controllers
+```
+
+`SLOT` is `0`–`3`, a comma list, or `all`; `SOURCE` is `keyboard` or
+`pad:<index|name>` (prefer names — indices shift when devices are replugged).
+
+On the Switch: **System Settings → Controllers and Sensors → Pro Controller
+Wired Communication → ON**.
+
+**Video** — `--window` for 4K60, `--list-modes` to see what your card offers,
+`--capture-mode 1920x1080@240` to pick one. **F11** toggles borderless
+fullscreen. A mode must be requested explicitly or DirectShow hands out 640×480;
+4K60 and the other high modes are MJPEG only, since raw 4K60 will not fit over
+USB. The card's HDMI passthrough never reaches the PC, so only the capture path
+can feed the window.
+
+## Steam Controller (Steam Input)
+
+Outside Steam a Steam Controller is a keyboard/mouse device. Steam Input turns
+it into a gamepad, but only for processes **Steam launches itself**:
+
+1. **Steam → Games → Add a Non-Steam Game → Browse** →
+   `bin\OunceBridge\OunceBridge.exe`
+2. Right-click → **Properties → Controller → Enable Steam Input**
+3. **Edit Layout** → bind sticks to **Joystick Move**, *not* D-Pad
+4. Launch from Steam, then **click the window once** — Steam only leaves
+   Desktop mode for a focused window, or the pad stays in mouse mode
+
+Sticks bound to D-Pad are cut to eight directions before Ounce sees them and the
+analog range cannot be recovered. Set Launch Options to `--probe` to check:
+motion should move `AXES`, not `HATS`.
+
+`bridge.bat` sets `SDL_JOYSTICK_HIDAPI_STEAM=0` on purpose — left on, SDL grabs
+the pad over HID and bypasses Steam Input entirely.
+
+## Remapping controls
+
+Dropdown at the top of the window → **Remap keyboard controls…**. Click an
+input, press a key. **Esc** cancels, **reset all** restores defaults. Rebinding
+a key in use takes it from its previous owner, and changes apply instantly to
+every player on the keyboard.
+
+| Input | Key | Input | Key | Input | Key |
+| --- | --- | --- | --- | --- | --- |
+| L-Stick U/D/L/R | `W` `S` `A` `D` | D-Pad | arrows | X / Y / B / A | `I` `J` `K` `L` |
+| R-Stick U/D/L/R | `8` `0` `7` `9` | L / R | `U` `O` | ZL / ZR | `Y` `P` |
+| L3 / R3 | `Z` `X` | + / − | `N` `M` | Home / Capture | `H` `C` |
+
+The same dropdown holds the video device, capture mode (raw vs compressed), HDR
+toggle, and each player's input source. For pad mappings or a saved keyboard
+layout:
+
+```bash
+python test_bridge.py --dump-config mymap.json
+python test_bridge.py --config mymap.json
+```
+
+## Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| One slot fails wiring test | That slot's CS or MISO — SCK/MOSI faults break *all* slots |
+| All slots fail | Missing common ground, or SCK/MOSI disconnected |
+| Enumerates on Switch but does nothing | Wired communication off in Switch settings |
+| Steam Controller acts as a mouse | Window not focused, or Steam Input not enabled |
+| Sticks give only 8 directions | Steam layout has them on D-Pad |
+| Video is 640×480 | No capture mode requested |
+| Video will not start | VLC missing, or wrong bit-width for your Python |

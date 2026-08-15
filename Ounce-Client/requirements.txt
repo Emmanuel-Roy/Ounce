@@ -1,0 +1,14 @@
+# Ounce client dependencies.  pip install -r requirements.txt
+#
+# python-vlc is only the binding - it needs the VLC application itself
+# installed, and at the SAME bit-width as your Python (64-bit VLC for 64-bit
+# Python), or importing it fails to find libvlc.
+pyserial
+pygame
+python-vlc
+numpy
+sounddevice
+imageio-ffmpeg
+
+# Only needed to build the standalone exe (build_exe.bat)
+pyinstaller

@@ -1,6 +1,7 @@
-# Build Directories
+# Build directories
 build/
 **/build/
+build_pico1/
 .bin/
 
 # Temporary / OS / Python files
@@ -11,5 +12,11 @@ __pycache__/
 *.user
 *.suo
 
-# Standalone bridge build (~149MB, reproducible via tools/build_exe.bat)
+# VS Code local history, previously committed here by accident
+.history/
+
+# Standalone client build (~149MB, reproducible via Ounce-Client/build_exe.bat).
+# The prebuilt exe lives in bin/OunceBridge/ on disk but is kept out of git:
+# it is 181 files including an 84MB ffmpeg binary, and a fresh copy of all of
+# it would land in history on every rebuild.
 bin/OunceBridge/

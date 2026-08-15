@@ -1,8 +1,12 @@
-[submodule "Hardware/servant-src/GP2040-CE-SPI"]
-	path = Hardware/servant-src/GP2040-CE-SPI
-	url = git@github.com:Emmanuel-Roy/GP2040-CE-SPI.git
+[submodule "Ounce-Hardware/master-firmware/pico-sdk"]
+	path = Ounce-Hardware/pico-sdk
+	url = https://github.com/raspberrypi/pico-sdk.git
+	branch = master
+[submodule "Ounce-Hardware/servant-firmware/GP2040-CE-SPI"]
+	path = Ounce-Hardware/servant-firmware/GP2040-CE-SPI
+	url = https://github.com/Emmanuel-Roy/GP2040-CE-SPI.git
 	branch = main
-[submodule "Hardware/Ounce-PCB/ki-lime-pi-to-go"]
-	path = Hardware/Ounce-PCB/ki-lime-pi-to-go
+[submodule "Ounce-Hardware/pcb/ki-lime-pi-to-go"]
+	path = Ounce-Hardware/pcb/ki-lime-pi-to-go
 	url = https://github.com/recursivenomad/ki-lime-pi-to-go.git
 	branch = v1.1.0

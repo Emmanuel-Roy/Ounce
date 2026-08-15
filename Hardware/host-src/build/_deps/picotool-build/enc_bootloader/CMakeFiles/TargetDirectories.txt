@@ -1,2 +1,0 @@
-Z:/Code/Github/Ounce/Hardware/host-src/build/_deps/picotool-build/enc_bootloader/CMakeFiles/edit_cache.dir
-Z:/Code/Github/Ounce/Hardware/host-src/build/_deps/picotool-build/enc_bootloader/CMakeFiles/rebuild_cache.dir
