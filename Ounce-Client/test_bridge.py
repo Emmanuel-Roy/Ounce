@@ -102,6 +102,87 @@ def default_config():
     }
 
 
+def keymap_store_path():
+    """Where the in-app keyboard remapper persists its bindings.
+
+    Deliberately NOT beside the exe: build_exe.bat runs PyInstaller with
+    --noconfirm, which wipes bin/OunceClient/ on every rebuild, so a keymap
+    kept there would be destroyed by rebuilding the client.
+    """
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "Ounce", "keymap.json")
+
+
+def load_saved_keymap():
+    """The saved bindings over the defaults, or just the defaults.
+
+    Merged rather than replaced so that inputs added to the protocol later
+    still get their default key instead of silently coming back unbound in
+    everyone's saved file.
+    """
+    import json
+    km = dict(DEFAULT_KEYBOARD_BINDINGS)
+    path = keymap_store_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+    except FileNotFoundError:
+        return km
+    except Exception as e:
+        print(f"[-] Ignoring unreadable {path}: {e}")
+        return km
+    if not isinstance(saved, dict):
+        print(f"[-] Ignoring {path}: expected an object of action -> key")
+        return km
+    bindings = saved.get("keyboard", saved)      # tolerate a bare action->key map
+    if not isinstance(bindings, dict):
+        print(f"[-] Ignoring {path}: 'keyboard' is not an object")
+        return km
+    # Filtered per entry rather than validated as a whole: one unrecognised
+    # action - a hand edit, or a file written by a newer build - should not
+    # throw away every other binding the player set.
+    bad = []
+    for action, key in bindings.items():
+        name = str(key).upper()
+        if action not in ALL_ACTIONS:
+            bad.append(f"unknown input '{action}'")
+        elif name not in VK_NAMES:
+            bad.append(f"unknown key '{key}' for '{action}'")
+        else:
+            km[action] = name
+    if bad:
+        print("[-] Skipped in saved keymap: " + "; ".join(bad))
+
+    # Rebinding a key in use unbinds whoever held it, and that absence has to
+    # survive the restart. Merging over the defaults would otherwise hand the
+    # key straight back to its default owner - so binding J to B1 would come
+    # back as both B1 and B3 on J, the exact collision the remapper prevents.
+    claimed = {km[a] for a in bindings if a in km}
+    for action in list(km):
+        if action not in bindings and km[action] in claimed:
+            del km[action]
+
+    print(f"[+] Keyboard bindings loaded from {path}")
+    return km
+
+
+def save_keymap(km):
+    """Persist the live bindings. Never fatal - a remap that cannot be saved
+    still applies to this session."""
+    import json
+    path = keymap_store_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"keyboard": km}, f, indent=2, sort_keys=True)
+        os.replace(tmp, path)                    # never leave a half-written file
+        return True
+    except Exception as e:
+        print(f"[-] Could not save keymap to {path}: {e}")
+        return False
+
+
 def load_config(path):
     import json
     with open(path, "r", encoding="utf-8") as f:
@@ -427,6 +508,9 @@ ACTION_DISPLAY = [
     ("S2", "+  (Start)"),          ("S1", "-  (Select)"),
     ("HOME", "Home"),              ("CAPTURE", "Capture"),
 ]
+
+# Same names, for reporting a single action without scanning the list.
+ACTION_LABEL = {a: n for a, n in ACTION_DISPLAY}
 
 
 def pygame_key_to_name(pg, key):
@@ -1978,7 +2062,7 @@ def main():
     # One keyboard binding map shared by every slot using the keyboard, held by
     # reference so a remap in the toolbar takes effect immediately everywhere
     # rather than only on slots assigned afterwards.
-    live_keymap = dict(DEFAULT_KEYBOARD_BINDINGS)
+    live_keymap = load_saved_keymap()
 
     # slot_sources[slot] = list of (kind, controller_or_None, label)
     slot_sources = {}
@@ -2310,6 +2394,12 @@ def main():
             return
         kind, value = picked
 
+        if kind == "keymap":
+            # "reset all" put the defaults back; persist that too, or the old
+            # remaps would return on the next launch.
+            save_keymap(live_keymap)
+            return
+
         if kind == "slot":
             # Reassign a player slot live. Rebuilding slot_sources
             # also changes enabled_mask, which is what tells the
@@ -2363,9 +2453,13 @@ def main():
         """Feed keypresses to the remap screen while it is waiting.
         Returns True if the key was consumed."""
         if toolbar.capture_action:
+            # Read it before binding - bind_key clears capture_action, so
+            # reporting it afterwards always said "input".
+            action = toolbar.capture_action
             if toolbar.bind_key(_pg, key):
                 print("[+] bound %s -> %s" %
-                      (toolbar.capture_action or "input", _pg.key.name(key)))
+                      (ACTION_LABEL.get(action, action), _pg.key.name(key)))
+                save_keymap(live_keymap)
             return True
         return False
 

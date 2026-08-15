@@ -207,6 +207,10 @@ input, press a key. **Esc** cancels, **reset all** restores defaults. Rebinding
 a key in use takes it from its previous owner, and changes apply instantly to
 every player on the keyboard.
 
+Remaps are saved to `%APPDATA%\Ounce\keymap.json` as you make them and reload
+on the next launch, so this only has to be done once. Deleting that file
+restores the defaults below.
+
 | Input | Key | Input | Key | Input | Key |
 | --- | --- | --- | --- | --- | --- |
 | L-Stick U/D/L/R | `W` `S` `A` `D` | D-Pad | arrows | X / Y / B / A | `I` `J` `K` `L` |
