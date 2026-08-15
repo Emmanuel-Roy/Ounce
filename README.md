@@ -19,8 +19,7 @@ keyboard / pads -> Windows client -> USB serial -> Pico 2 W master
 | --- | --- | --- |
 | 1 | **Raspberry Pi Pico 2 W** (RP2350) | Master |
 | 4 | **Raspberry Pi Pico 1** (RP2040) | Servants — one per player |
-| 4 | Micro-USB cables | Servants -> Switch (powered hub into the dock) |
-| 1 | Micro-USB / USB-C cable | Master -> PC (power + serial) |
+| 5 | Micro-USB cables | 4 for servants -> Switch (powered hub into the dock), 1 for master -> PC (power + serial) |
 | 1 | **Elgato capture card** (4K S or similar) | Switch video in the client window |
 | 1 | **Ounce PCB** or breadboard + jumpers | SPI bus and common ground |
 
