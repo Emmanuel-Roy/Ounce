@@ -2575,6 +2575,13 @@ def main():
         nonlocal vlc_preview, vlc_aspect, refit_until
         if is_fullscreen() or vlc_preview is None:
             return
+        # Re-enumerate on every toolbar click, so a controller connected after
+        # the client started still shows up. SDL does notice the device (the
+        # event pump raises JOYDEVICEADDED), but the menu was built from a list
+        # taken once at startup - which is why a Parsec pad, or anything else
+        # plugged in later, appeared to be unsupported when it was simply not
+        # being looked for again.
+        toolbar.set_inputs(list_real_pads(), *_slot_state())
         picked = toolbar.click(pos)
         if not picked:
             return
