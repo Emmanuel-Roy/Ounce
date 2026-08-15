@@ -15,8 +15,6 @@ __pycache__/
 # VS Code local history, previously committed here by accident
 .history/
 
-# Standalone client build (~149MB, reproducible via Ounce-Client/build_exe.bat).
-# The prebuilt exe lives in bin/OunceClient/ on disk but is kept out of git:
-# it is 181 files including an 84MB ffmpeg binary, and a fresh copy of all of
-# it would land in history on every rebuild.
-bin/OunceClient/
+# bin/OunceClient/ is committed deliberately - the point of bin/ is that you can
+# clone and run without a toolchain. It is ~149MB across 181 files, so avoid
+# rebuilding it in commits that do not need to change it.

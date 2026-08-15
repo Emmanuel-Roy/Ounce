@@ -172,8 +172,10 @@ can feed the window.
 
 ## Steam Controller (Steam Input)
 
-Outside Steam a Steam Controller is a keyboard/mouse device. Steam Input turns
-it into a gamepad, but only for processes **Steam launches itself**:
+**A Steam Controller only works if you add `OunceClient.exe` to Steam and launch
+it from there.** Outside Steam it is a keyboard/mouse device with no gamepad for
+anything to detect, and Steam Input only turns it into one for processes **Steam
+launches itself** — running the exe directly will never see it.
 
 1. **Steam → Games → Add a Non-Steam Game → Browse** →
    `bin\OunceClient\OunceClient.exe`
@@ -188,6 +190,12 @@ motion should move `AXES`, not `HATS`.
 
 `bridge.bat` sets `SDL_JOYSTICK_HIDAPI_STEAM=0` on purpose — left on, SDL grabs
 the pad over HID and bypasses Steam Input entirely.
+
+**Parsec** controllers arrive as ordinary XInput pads, so they need none of the
+above — they appear in the input list by themselves and can be assigned to a
+slot like any other controller. The name will be a generic XInput one rather
+than whatever the remote player is actually holding, so with several connected,
+`--list-controllers` and the assignment order are what tell them apart.
 
 ## Remapping controls
 

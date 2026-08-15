@@ -1,0 +1,8 @@
+# The built client is a distributable bundle - store every file byte for byte.
+# Without this, git's CRLF normalisation rewrites the text files inside it
+# (.py, .dist-info metadata) on checkout, which is not something a shipped
+# artifact should have happen to it.
+bin/OunceClient/** binary
+
+# Firmware images
+*.uf2 binary
