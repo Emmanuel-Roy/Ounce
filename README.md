@@ -47,7 +47,7 @@ one wire would fight.
 | MOSI | GP19 | 25 | MOSI (GP16) on all servants |
 | CS 0–3 | GP21, GP22, GP26, GP27 | 27, 29, 31, 32 | CS on servant 0, 1, 2, 3 |
 | MISO 0–3 | GP0, GP4, GP16, GP20 | 1, 6, 21, 26 | MISO from servant 0, 1, 2, 3 |
-| GND | GND | 3, 8, 13, 18, 23, 28, 33, 38 | GND on every servant |
+| GND | GND | 38 | GND (pin 38) on every servant |
 
 **Each servant (Pico 1)** — identical for all four:
 
@@ -57,7 +57,7 @@ one wire would fight.
 | CS | GP17 | 22 | that servant's own CS pin |
 | SCK | GP18 | 24 | master GP18 |
 | MISO out | GP19 | 25 | that servant's own MISO pin |
-| GND | GND | 23, 38 | master GND |
+| GND | GND | 38 | master GND (pin 38) |
 
 **Every board must share a ground with the master** — without it you get
 intermittent garbage rather than a clean failure. Bus is 4 MHz, SPI mode 1.
