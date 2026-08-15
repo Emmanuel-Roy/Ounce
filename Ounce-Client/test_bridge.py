@@ -911,6 +911,7 @@ class Toolbar:
         self.hdr = False
         self.pads = []               # [(idx, name)] real controllers
         self.slots = {}              # slot -> 'keyboard' | pad index | None
+        self.slot_kb = {}            # slot -> keyboard merged in alongside a pad
         self.open_menu = None        # None | 'device' | 'mode' | 'hdr' | 'slot0'.. | 'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
@@ -923,9 +924,13 @@ class Toolbar:
         self.device = device
         self.mode = mode
 
-    def set_inputs(self, pads, slots):
+    def set_inputs(self, pads, slots, slot_kb=None):
         self.pads = pads
         self.slots = dict(slots)
+        # slot -> True when the keyboard drives this player *alongside* a pad.
+        # Kept separate from self.slots, which holds the primary source: the
+        # two are not alternatives, they are merged.
+        self.slot_kb = dict(slot_kb or {})
 
     def _slot_label(self, slot, short=True):
         v = self.slots.get(slot)
@@ -933,10 +938,11 @@ class Toolbar:
             return "off" if short else "Disabled"
         if v == "keyboard":
             return "kbd" if short else "Keyboard"
+        kb = " + kbd" if self.slot_kb.get(slot) else ""
         for i, n in self.pads:
             if i == v:
-                return n.split("(")[0].strip()[:12 if short else 40]
-        return f"pad{v}"
+                return n.split("(")[0].strip()[:12 if short else 40] + kb
+        return f"pad{v}{kb}"
 
     def _font(self, size):
         return _pg.font.SysFont("segoeui", size) or _pg.font.SysFont("consolas", size)
@@ -1025,6 +1031,17 @@ class Toolbar:
                      ("slot", "Keyboard", (slot, "keyboard"))]
             items += [("slot", name, (slot, idx)) for idx, name in self.pads]
             items.append(("slot", "Disabled", (slot, None)))
+            # Only offered on a pad: the keyboard is merged *with* the pad, so
+            # on a keyboard-driven or disabled slot there is nothing to add it
+            # to. Exists because pads are missing buttons the Switch has - a
+            # Steam Controller has no Home or Capture - and swapping the whole
+            # slot over to the keyboard just to press one of them is worse.
+            v = self.slots.get(slot)
+            if v is not None and v != "keyboard":
+                on = bool(self.slot_kb.get(slot))
+                items.append(("slotkb",
+                              f"   [{'x' if on else ' '}]  also use keyboard "
+                              f"(Home / Capture)", (slot, not on)))
             items.append(("go", "< back", "root"))
         else:
             # Grouped, because raw vs compressed is what decides whether 4K60
@@ -2450,23 +2467,31 @@ def main():
                 capture_audio = None
 
     def _slot_state():
-        """Current slot assignment in the shape the toolbar wants."""
-        out = {}
+        """Current slot assignment in the shape the toolbar wants.
+
+        A slot can hold a pad and the keyboard at once, so the pad is the
+        primary source whenever there is one, and the keyboard is reported
+        separately as an addition rather than as the assignment.
+        """
+        out, kb = {}, {}
         for s in range(NUM_SLOTS):
-            entries = slot_sources.get(s)
-            if not entries:
-                out[s] = None
-            elif entries[0][0] == "keyboard":
+            entries = slot_sources.get(s) or []
+            pad = next((e for e in entries if e[0] == "pad"), None)
+            has_kb = any(e[0] == "keyboard" for e in entries)
+            if pad is not None:
+                out[s] = next((i for i, (c, _n) in opened_pads.items()
+                               if c is pad[1][0]), None)
+                kb[s] = has_kb
+            elif has_kb:
                 out[s] = "keyboard"
             else:
-                out[s] = next((i for i, (c, _n) in opened_pads.items()
-                               if c is entries[0][1][0]), None)
-        return out
+                out[s] = None
+        return out, kb
 
     # Seed the toolbar with the real pad list and current assignment, so P1-P4
     # show the truth from the first frame rather than after the first click.
     if _window is not None:
-        toolbar.set_inputs(list_real_pads(), _slot_state())
+        toolbar.set_inputs(list_real_pads(), *_slot_state())
         toolbar.keymap = live_keymap      # edited in place by the remap screen
     recorder = None                       # InputRecorder while recording
 
@@ -2577,12 +2602,34 @@ def main():
             print("[-] Stop recording before changing the capture settings.")
             return
 
+        if kind == "slotkb":
+            # Add or remove the keyboard *alongside* whatever pad the slot
+            # already has; merge_inputs combines them, so the pad keeps working
+            # and the keyboard fills in the buttons it does not have.
+            slot, want = value
+            entries = slot_sources.get(slot)
+            if not entries:
+                return
+            entries = [e for e in entries if e[0] != "keyboard"]
+            if want:
+                entries.append(("keyboard", live_keymap, "keyboard"))
+            slot_sources[slot] = entries
+            toolbar.set_inputs(toolbar.pads, *_slot_state())
+            print(f"[+] Controller {slot + 1}: keyboard "
+                  f"{'added alongside the pad' if want else 'removed'}")
+            return
+
         if kind == "slot":
             # Reassign a player slot live. Rebuilding slot_sources
             # also changes enabled_mask, which is what tells the
             # master which targets to poll at all.
             nonlocal enabled_mask, active_slots
             slot, src = value
+            # Whether the keyboard was merged in is a property of the slot, not
+            # of the particular pad, so swapping pads keeps it rather than
+            # silently dropping it and losing Home/Capture again.
+            had_kb = any(e[0] == "keyboard"
+                         for e in (slot_sources.get(slot) or []))
             if src is None:
                 slot_sources.pop(slot, None)
             elif src == "keyboard":
@@ -2590,13 +2637,16 @@ def main():
                                        "keyboard")]
             else:
                 c, name = open_pad_once(src)
-                slot_sources[slot] = [("pad", (c, dict(DEFAULT_PAD_BUTTONS)),
-                                       f"[{src}] {name}")]
+                entries = [("pad", (c, dict(DEFAULT_PAD_BUTTONS)),
+                            f"[{src}] {name}")]
+                if had_kb:
+                    entries.append(("keyboard", live_keymap, "keyboard"))
+                slot_sources[slot] = entries
             active_slots = sorted(slot_sources)
             enabled_mask = 0
             for s in active_slots:
                 enabled_mask |= (1 << s)
-            toolbar.set_inputs(toolbar.pads, _slot_state())
+            toolbar.set_inputs(toolbar.pads, *_slot_state())
             print(f"[+] Controller {slot + 1} -> "
                   f"{'disabled' if src is None else src}")
             return
