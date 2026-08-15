@@ -16,7 +16,7 @@ __pycache__/
 .history/
 
 # Standalone client build (~149MB, reproducible via Ounce-Client/build_exe.bat).
-# The prebuilt exe lives in bin/OunceBridge/ on disk but is kept out of git:
+# The prebuilt exe lives in bin/OunceClient/ on disk but is kept out of git:
 # it is 181 files including an 84MB ffmpeg binary, and a fresh copy of all of
 # it would land in history on every rebuild.
-bin/OunceBridge/
+bin/OunceClient/

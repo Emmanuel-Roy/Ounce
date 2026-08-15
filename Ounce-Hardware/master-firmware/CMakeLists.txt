@@ -9,7 +9,7 @@ if (NOT pico_sdk_import_included)
     endif()
 endif()
 
-project(ounce_master C CXX ASM)
+project(OunceMaster C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -33,22 +33,22 @@ add_compile_definitions(PICO_STDIO_USB_ENABLE_IRQ_BACKGROUND_TASK=0)
 
 pico_sdk_init()
 
-add_executable(ounce_master
+add_executable(OunceMaster
     src/main.cpp
     src/spi_master.cpp
 )
 
-target_include_directories(ounce_master PRIVATE
+target_include_directories(OunceMaster PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-target_link_libraries(ounce_master PRIVATE
+target_link_libraries(OunceMaster PRIVATE
     pico_stdlib
     hardware_spi
     hardware_gpio
 )
 
-pico_enable_stdio_usb(ounce_master 1)
-pico_enable_stdio_uart(ounce_master 0)
+pico_enable_stdio_usb(OunceMaster 1)
+pico_enable_stdio_uart(OunceMaster 0)
 
-pico_add_extra_outputs(ounce_master)
+pico_add_extra_outputs(OunceMaster)

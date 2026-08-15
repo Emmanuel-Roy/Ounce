@@ -1,6 +1,6 @@
 @echo off
 REM ===========================================================================
-REM Build bin\OunceBridge.exe - a standalone bridge with no Python needed.
+REM Build bin\OunceClient.exe - a standalone bridge with no Python needed.
 REM
 REM The exe exists mainly so Steam can see it: Steam's "Add a Non-Steam Game"
 REM browser filters to *.exe, so a .bat is invisible there unless you switch
@@ -23,11 +23,11 @@ REM as a CHILD process, and Steam Input only hooks the process Steam actually
 REM launched - so the pad would be read by a process Steam never instrumented,
 REM and the controller stays stuck in desktop/mouse mode. onedir keeps it a
 REM single process, which is what Steam needs.
-echo [Ounce] Building OunceBridge.exe ...
+echo [Ounce] Building OunceClient.exe ...
 python -m PyInstaller ^
   --onedir ^
   --console ^
-  --name OunceBridge ^
+  --name OunceClient ^
   --distpath ..\bin ^
   --workpath "%TEMP%\ounce_pyi_build" ^
   --specpath "%TEMP%\ounce_pyi_build" ^
@@ -42,7 +42,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [+] Built ..\bin\OunceBridge\OunceBridge.exe
+echo [+] Built ..\bin\OunceClient\OunceClient.exe
 echo     Add THAT exe to Steam as a Non-Steam Game, then enable Steam Input.
-echo     Keep the whole OunceBridge folder together - the exe needs _internal\.
+echo     Keep the whole OunceClient folder together - the exe needs _internal\.
 endlocal

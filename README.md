@@ -29,7 +29,7 @@ Capture card is optional — run with `--no-preview` for input only.
 ## Layout
 
 ```
-bin/               Flash these: ounce_master.uf2, GP2040-CE_0.0.0_Pico.uf2, OunceBridge/
+bin/               Flash these: OunceMaster.uf2, OunceServant.uf2, OunceClient/
 Ounce-Client/      Windows client: test_bridge.py, wiring_test.py, bridge.bat, build_exe.bat
 Ounce-Hardware/    master-firmware/, servant-firmware/, pcb/, pico-sdk/
 ```
@@ -82,8 +82,8 @@ Prebuilt images are in `bin/` — no build needed.
 
 | Board | Hold BOOTSEL, plug in, drive appears | Drag on |
 | --- | --- | --- |
-| Servants (×4) | `RPI-RP2` | `bin/GP2040-CE_0.0.0_Pico.uf2` |
-| Master | `RP2350` | `bin/ounce_master.uf2` |
+| Servants (×4) | `RPI-RP2` | `bin/OunceServant.uf2` |
+| Master | `RP2350` | `bin/OunceMaster.uf2` |
 
 All four servants get the **same** file; each learns its player number from its
 CS pin.
@@ -96,7 +96,7 @@ git clone --recursive https://github.com/Emmanuel-Roy/Ounce.git
 
 Already cloned? `git submodule update --init --recursive`.
 
-**Master firmware** — needs CMake, Ninja and `arm-none-eabi-gcc` (the [Pico
+**Master firmware** — needs CMake, a make tool and `arm-none-eabi-gcc` (the [Pico
 Windows installer](https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html)
 has all three):
 
@@ -107,16 +107,21 @@ cmake --build build
 ```
 
 Add `-G Ninja` or `-G "MinGW Makefiles"` if CMake does not pick a generator on
-its own. Output is `build/ounce_master.uf2`.
+its own. Output is `build/OunceMaster.uf2`.
 
 **Servant firmware** (`SKIP_WEBBUILD` avoids needing Node/npm for GP2040-CE's
 unused web configurator):
 
 ```bash
 cd Ounce-Hardware/servant-firmware/GP2040-CE-SPI
-cmake -B build -DSKIP_WEBBUILD=ON
+cmake -B build -DSKIP_WEBBUILD=ON -DPICO_SDK_PATH=../../pico-sdk
 cmake --build build
 ```
+
+Output is `build/OunceServant.uf2`. Both firmwares use the vendored SDK, which
+is pinned to **2.2.0** because that is what GP2040-CE builds against — on 2.3.0
+the servant fails to link, with mbedtls calling PSA crypto functions that its
+config leaves out.
 
 **Client:**
 
@@ -128,7 +133,7 @@ python Ounce-Client/test_bridge.py
 `python-vlc` is only the binding — also install VLC itself, at the same
 bit-width as your Python, or video will not start.
 
-`Ounce-Client\build_exe.bat` rebuilds `bin\OunceBridge\`. It uses `--onedir`
+`Ounce-Client\build_exe.bat` rebuilds `bin\OunceClient\`. It uses `--onedir`
 deliberately: a onefile build relaunches itself as a child process, and Steam
 Input only instruments the process Steam launched. Keep the folder together —
 the exe needs `_internal\` beside it.
@@ -172,7 +177,7 @@ Outside Steam a Steam Controller is a keyboard/mouse device. Steam Input turns
 it into a gamepad, but only for processes **Steam launches itself**:
 
 1. **Steam → Games → Add a Non-Steam Game → Browse** →
-   `bin\OunceBridge\OunceBridge.exe`
+   `bin\OunceClient\OunceClient.exe`
 2. Right-click → **Properties → Controller → Enable Steam Input**
 3. **Edit Layout** → bind sticks to **Joystick Move**, *not* D-Pad
 4. Launch from Steam, then **click the window once** — Steam only leaves
