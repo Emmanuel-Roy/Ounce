@@ -1637,11 +1637,12 @@ def gamepad_available():
         if under_steam:
             os.environ.setdefault("SDL_JOYSTICK_RAWINPUT", "0")
 
-        # Steam switches a controller out of its Desktop (keyboard/mouse)
-        # configuration when it detects the *game* - which it does by hooking a
-        # real window. A windowless process never triggers that switch, leaving
-        # the pad stuck in mouse mode no matter what layout is configured. So
-        # under Steam we create an actual window; standalone we stay headless.
+        # A window is wanted unless explicitly refused (--no-window clears the
+        # variable). Under Steam it is not optional: Steam switches a controller
+        # out of its Desktop (keyboard/mouse) configuration when it detects the
+        # *game*, which it does by hooking a real window. A windowless process
+        # never triggers that switch, leaving the pad stuck in mouse mode no
+        # matter what layout is configured.
         want_window = under_steam or os.environ.get("OUNCE_WINDOW") == "1"
         if not want_window:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -1812,7 +1813,6 @@ def main():
     parser.add_argument("--port", type=str, default=None, help="Serial port of Primary RP2350 Master")
     parser.add_argument("--target", type=int, default=0, help="Target Slave ID (0..3)")
     parser.add_argument("--max-packets", type=int, default=0, help="Exit automatically after transmitting N packets (0 = run continuously)")
-    parser.add_argument("--relaunch-seconds", type=float, default=5.0, help="Fully close and re-exec the bridge (fresh serial connection) after this many seconds, as a safety net against a stuck link. 0 disables.")
     parser.add_argument("--config", type=str, default=None,
                         help="JSON file defining per-slot key/button bindings. "
                              "Lets each virtual Switch controller be driven by "
@@ -1872,7 +1872,11 @@ def main():
     parser.add_argument("--list-capture", action="store_true",
                         help="List capture devices ffmpeg can see and exit.")
     parser.add_argument("--window", action="store_true",
-                        help="Force the preview window even when not launched by Steam.")
+                        help="Deprecated - the window is on by default. Kept so "
+                             "existing shortcuts and Steam launch options still work.")
+    parser.add_argument("--no-window", action="store_true",
+                        help="Run headless: no window, so no video, toolbar or "
+                             "remapping, and slots are chosen at a console prompt.")
     parser.add_argument("--hdr", action="store_true",
                         help="Start with HDR passthrough instead of tone mapping to SDR. "
                              "Toggleable from the toolbar.")
@@ -1903,7 +1907,15 @@ def main():
         print("    Edit it, then run with --config " + args.dump_config)
         sys.exit(0)
 
-    if args.window:
+    # The window IS the client: the video, the toolbar, the slot switches and
+    # the key remapper all live in it. So it is the default, and --no-window is
+    # the opt-out for a headless console bridge. It used to be the other way
+    # round, from when the only reason for a window was to give Steam Input
+    # something to hook - which meant running the exe directly got none of the
+    # interface.
+    if args.no_window:
+        os.environ.pop("OUNCE_WINDOW", None)   # beat an inherited OUNCE_WINDOW=1
+    else:
         os.environ["OUNCE_WINDOW"] = "1"
 
     # Bring pygame up now if a window is wanted. It is otherwise only started
@@ -2136,10 +2148,6 @@ def main():
     print("------------------------------------------")
     if opened_pads:
         print("[+] Pads: Guide = Home, Share/Capture = Capture.")
-    if args.relaunch_seconds > 0:
-        print(f"[+] Auto-relaunch enabled: fresh connection every {args.relaunch_seconds:.0f}s.\n")
-    else:
-        print("[+] Auto-relaunch disabled.\n")
 
     # Capture card preview. Only meaningful when a window exists, which is the
     # Steam case - the window has to be there for Steam Input anyway, so we may
@@ -2251,7 +2259,6 @@ def main():
         toolbar.keymap = live_keymap      # edited in place by the remap screen
 
     total_sent = 0
-    start_time = time.monotonic()
     last_paint = 0.0
     refit_until = 0.0      # keep re-fitting VLC until this time (see _refit)
     menu_was_open = False  # tracks video-child visibility vs the dropdown
@@ -2369,24 +2376,6 @@ def main():
             if is_key_down(VK_ESC):
                 print("\n[+] Exiting test bridge.")
                 break
-
-            if args.relaunch_seconds > 0 and (time.monotonic() - start_time) >= args.relaunch_seconds:
-                # Toggle DTR instead of closing/reopening the port: a full
-                # close+reopen goes through Windows' USB-CDC driver teardown
-                # and re-enumeration handshake, which can take 100-500ms and
-                # was the source of the visible stall. DTR toggling never
-                # closes the OS handle at all - it just pulses the control
-                # line - so it's sub-millisecond and still gets us the
-                # "cycle the connection" effect the relaunch is for.
-                print("[+] Disconnecting serial...")
-                try:
-                    ser.dtr = False
-                    time.sleep(0.005)
-                    ser.dtr = True
-                except Exception:
-                    pass
-                print("[+] Reconnected serial.")
-                start_time = time.monotonic()
 
             if args.max_packets > 0 and total_sent >= args.max_packets:
                 print("\n[+] Reached maximum packet limit of %d. Exiting." % args.max_packets)

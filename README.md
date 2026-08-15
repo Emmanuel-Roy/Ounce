@@ -163,7 +163,8 @@ python test_bridge.py --list-controllers
 On the Switch: **System Settings → Controllers and Sensors → Pro Controller
 Wired Communication → ON**.
 
-**Video** — `--window` for 4K60, `--list-modes` to see what your card offers,
+**Video** — the window opens by default at 4K60 (`--no-window` for a headless
+console bridge). `--list-modes` shows what your card offers,
 `--capture-mode 1920x1080@240` to pick one. **F11** toggles borderless
 fullscreen. A mode must be requested explicitly or DirectShow hands out 640×480;
 4K60 and the other high modes are MJPEG only, since raw 4K60 will not fit over
