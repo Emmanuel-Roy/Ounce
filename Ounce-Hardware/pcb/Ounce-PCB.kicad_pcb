@@ -20219,6 +20219,150 @@
 		(layer "Edge.Cuts")
 		(uuid "83f6b4e1-2e63-4b68-8092-2b634bf16b13")
 	)
+	(gr_text "SLAYER"
+		(at 150 119.5 0)
+		(layer "B.SilkS")
+		(uuid "3c1b6199-3cbc-47b8-8add-2d3342d04880")
+		(effects
+			(font
+				(size 5.5 2.2)
+				(thickness 0.8)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "THE"
+		(at 150 97 0)
+		(layer "B.SilkS")
+		(uuid "e94aa018-adb0-4d43-9145-548289d7fc84")
+		(effects
+			(font
+				(size 6 4)
+				(thickness 1)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "E"
+		(at 98 86 0)
+		(layer "B.SilkS")
+		(uuid "f3d914cd-a5ff-443f-aeda-60fe2f3a404c")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "N"
+		(at 98 109 0)
+		(layer "B.SilkS")
+		(uuid "1391030c-053f-4651-b4b2-b7f1f15c4195")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "C"
+		(at 124 86 0)
+		(layer "B.SilkS")
+		(uuid "21cd6cf4-22fd-4635-aa00-56224059b2fa")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "A"
+		(at 124 109 0)
+		(layer "B.SilkS")
+		(uuid "f76f272d-6cac-4780-8cc0-0b4706a2cc34")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "N"
+		(at 150 86 0)
+		(layer "B.SilkS")
+		(uuid "658bab7c-2675-4855-bc6d-f57c122d3201")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "T"
+		(at 150 109 0)
+		(layer "B.SilkS")
+		(uuid "3e38581e-86da-416a-a475-8d232b17a571")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "U"
+		(at 176 86 0)
+		(layer "B.SilkS")
+		(uuid "72253d42-1281-4d0c-a910-1ba91ebab9c4")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "I"
+		(at 176 109 0)
+		(layer "B.SilkS")
+		(uuid "71541ca4-f551-40b9-8f5b-0851e78b14f9")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "O"
+		(at 202 86 0)
+		(layer "B.SilkS")
+		(uuid "b34957f4-8895-4c50-842e-3325991ead82")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "T"
+		(at 202 109 0)
+		(layer "B.SilkS")
+		(uuid "77dd1f07-d82d-4ccd-b89f-f009cd1a2ebb")
+		(effects
+			(font
+				(size 9 7)
+				(thickness 1.4)
+			)
+			(justify mirror)
+		)
+	)
 	(segment
 		(start 184.89 80.95)
 		(end 193.11 80.95)
