@@ -1740,6 +1740,7 @@
 			(at -8.89 -19.05)
 			(size 1.6 1.6)
 			(layers "F.Cu" "F.Mask")
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -1781,6 +1782,7 @@
 			(drill 1)
 			(layers "*.Cu" "*.Mask")
 			(remove_unused_layers no)
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -3961,7 +3963,7 @@
 			)
 		)
 		(embedded_fonts no)
-		(model "../Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -3973,7 +3975,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -3984,7 +3986,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -3996,7 +3998,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4008,7 +4010,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4020,7 +4022,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4032,7 +4034,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4044,7 +4046,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4056,7 +4058,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4068,7 +4070,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -4080,7 +4082,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -5750,6 +5752,7 @@
 			(at -8.89 -19.05)
 			(size 1.6 1.6)
 			(layers "F.Cu" "F.Mask")
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -5791,6 +5794,7 @@
 			(drill 1)
 			(layers "*.Cu" "*.Mask")
 			(remove_unused_layers no)
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -7980,7 +7984,7 @@
 			)
 		)
 		(embedded_fonts no)
-		(model "../Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -7992,7 +7996,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -8003,7 +8007,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8015,7 +8019,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8027,7 +8031,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8039,7 +8043,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8051,7 +8055,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8063,7 +8067,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8075,7 +8079,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8087,7 +8091,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -8099,7 +8103,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -9769,6 +9773,7 @@
 			(at -8.89 -19.05)
 			(size 1.6 1.6)
 			(layers "F.Cu" "F.Mask")
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -9810,6 +9815,7 @@
 			(drill 1)
 			(layers "*.Cu" "*.Mask")
 			(remove_unused_layers no)
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -11999,7 +12005,7 @@
 			)
 		)
 		(embedded_fonts no)
-		(model "../Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12011,7 +12017,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -12022,7 +12028,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12034,7 +12040,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12046,7 +12052,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12058,7 +12064,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12070,7 +12076,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12082,7 +12088,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12094,7 +12100,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12106,7 +12112,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -12118,7 +12124,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -13788,6 +13794,7 @@
 			(at -8.89 -19.05)
 			(size 1.6 1.6)
 			(layers "F.Cu" "F.Mask")
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -13829,6 +13836,7 @@
 			(drill 1)
 			(layers "*.Cu" "*.Mask")
 			(remove_unused_layers no)
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -16018,7 +16026,7 @@
 			)
 		)
 		(embedded_fonts no)
-		(model "../Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16030,7 +16038,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -16041,7 +16049,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16053,7 +16061,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16065,7 +16073,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16077,7 +16085,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16089,7 +16097,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16101,7 +16109,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16113,7 +16121,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16125,7 +16133,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -16137,7 +16145,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -17807,6 +17815,7 @@
 			(at -8.89 -19.05)
 			(size 1.6 1.6)
 			(layers "F.Cu" "F.Mask")
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -17848,6 +17857,7 @@
 			(drill 1)
 			(layers "*.Cu" "*.Mask")
 			(remove_unused_layers no)
+			(net "GND")
 			(pinfunction "GND_3")
 			(pintype "power_out")
 			(options
@@ -20037,7 +20047,7 @@
 			)
 		)
 		(embedded_fonts no)
-		(model "../Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/DIP-40_W17.78mm_H8.51mm_Socket.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20049,7 +20059,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -20060,7 +20070,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20072,7 +20082,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20084,7 +20094,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20096,7 +20106,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_H_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20108,7 +20118,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20120,7 +20130,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20132,7 +20142,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_W_AddedHeaders_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20144,7 +20154,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20156,7 +20166,7 @@
 				(xyz 0 0 0)
 			)
 		)
-		(model "../Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.wrl"
+		(model "${KIPRJMOD}/ki-lime-pi-to-go/Module_RaspberryPi_Pico.3dshapes/RaspberryPi_Pico_WH_Socketed.step"
 			(hide yes)
 			(offset
 				(xyz 0 0 0)
@@ -20208,6 +20218,78 @@
 		)
 		(layer "Edge.Cuts")
 		(uuid "83f6b4e1-2e63-4b68-8092-2b634bf16b13")
+	)
+	(segment
+		(start 184.89 80.95)
+		(end 193.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "2442cf54-8f54-450e-8622-8eb9e2de90a9")
+	)
+	(segment
+		(start 167.11 80.95)
+		(end 184.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "41f937d5-d0bf-42d6-a7a2-50bd076e3f21")
+	)
+	(segment
+		(start 158.89 80.95)
+		(end 167.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "6d1cb265-d99a-44e3-9317-71ec8fcc58db")
+	)
+	(segment
+		(start 106.89 80.95)
+		(end 115.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "6e5284e1-dbe8-4331-b21a-bd7d3b1903f3")
+	)
+	(segment
+		(start 193.11 80.95)
+		(end 210.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "7793d363-727c-4d3b-9ab2-f70aeaad94ad")
+	)
+	(segment
+		(start 115.11 80.95)
+		(end 132.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "8a42430b-d516-49f7-90c3-078cf545e522")
+	)
+	(segment
+		(start 141.11 80.95)
+		(end 158.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "c32d47ba-b454-4093-9074-7fed82336c43")
+	)
+	(segment
+		(start 106.89 80.95)
+		(end 89.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "c4e95a19-7eba-46db-af60-45069909c673")
+	)
+	(segment
+		(start 132.89 80.95)
+		(end 141.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "dbd4f489-9035-4219-a65d-36d68f333e25")
 	)
 	(embedded_fonts no)
 )
