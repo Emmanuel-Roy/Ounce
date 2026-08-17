@@ -20223,28 +20223,6 @@
 		(layer "Edge.Cuts")
 		(uuid "83f6b4e1-2e63-4b68-8092-2b634bf16b13")
 	)
-	(gr_text "Player 1"
-		(at 98 71.5 0)
-		(layer "F.SilkS")
-		(uuid "2af9255c-da52-43b3-9458-98fa22e19f0c")
-		(effects
-			(font
-				(size 1.5 1)
-				(thickness 0.22)
-			)
-		)
-	)
-	(gr_text "Player 2"
-		(at 124 71.5 0)
-		(layer "F.SilkS")
-		(uuid "a9b81bbc-55e1-4fab-b597-0a546d722ffb")
-		(effects
-			(font
-				(size 1.5 1)
-				(thickness 0.22)
-			)
-		)
-	)
 	(gr_text "Pico 2 W"
 		(at 150 128.5 0)
 		(layer "F.SilkS")
@@ -20256,8 +20234,30 @@
 			)
 		)
 	)
+	(gr_text "Player 1"
+		(at 98 71.5 180)
+		(layer "F.SilkS")
+		(uuid "2af9255c-da52-43b3-9458-98fa22e19f0c")
+		(effects
+			(font
+				(size 1.5 1)
+				(thickness 0.22)
+			)
+		)
+	)
+	(gr_text "Player 2"
+		(at 124 71.5 180)
+		(layer "F.SilkS")
+		(uuid "a9b81bbc-55e1-4fab-b597-0a546d722ffb")
+		(effects
+			(font
+				(size 1.5 1)
+				(thickness 0.22)
+			)
+		)
+	)
 	(gr_text "Player 3"
-		(at 176 71.5 0)
+		(at 176 71.5 180)
 		(layer "F.SilkS")
 		(uuid "e2ead53d-1a9a-4b65-8a89-1c86ed18f087")
 		(effects
@@ -20268,7 +20268,7 @@
 		)
 	)
 	(gr_text "Player 4"
-		(at 202 71.5 0)
+		(at 202 71.5 180)
 		(layer "F.SilkS")
 		(uuid "38993d85-ebe8-4c64-95cd-0be4eb6be490")
 		(effects
