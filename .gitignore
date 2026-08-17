@@ -21,3 +21,7 @@ recordings/
 # bin/OunceClient/ is committed deliberately - the point of bin/ is that you can
 # clone and run without a toolchain. It is ~149MB across 181 files, so avoid
 # rebuilding it in commits that do not need to change it.
+
+# Specctra interchange files, regenerated from the board
+*.dsn
+*.ses
