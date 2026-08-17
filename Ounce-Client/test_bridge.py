@@ -822,11 +822,20 @@ def list_dshow_modes(device_name):
     return modes
 
 
-def pick_best_mode(modes, want=None):
-    """Choose a capture mode. `want` is 'WxH', 'WxH@FPS', or None for best.
+# Preferred default: 1440p raw. Raw skips the card's MJPEG compression, so the
+# picture is not twice-compressed before it reaches the screen, and 1440p60 raw
+# is a rate the USB link and the decoder both keep up with - measured 41fps at
+# 4K60 MJPEG on this machine, so "4K60" was never really 60 anyway.
+DEFAULT_MODE = (2560, 1440)
+RAW_FORMATS = ("nv12", "yuv420p", "yuyv422")
 
-    With no preference: highest resolution first, then the highest frame rate
-    available at that resolution. Resolution is ranked first deliberately -
+
+def pick_best_mode(modes, want=None):
+    """Choose a capture mode. `want` is 'WxH', 'WxH@FPS', or None for the default.
+
+    With no preference: 1440p raw if the card offers it, else highest
+    resolution first and then the highest frame rate at that resolution.
+    Resolution is ranked ahead of frame rate in that fallback deliberately -
     maximising pixels-per-second instead would pick 1440p144 over 4K60, which
     is not what someone with a 4K source expects to see."""
     if not modes:
@@ -840,6 +849,12 @@ def pick_best_mode(modes, want=None):
                      and (fps is None or x[2] == fps)]
             if cands:
                 return max(cands, key=lambda x: x[2])
+    raw1440 = [x for x in modes if (x[0], x[1]) == DEFAULT_MODE
+               and x[3].lower() in RAW_FORMATS]
+    if raw1440:
+        # nv12 ahead of the others at equal frame rate: it is half the bytes of
+        # yuyv422 and the format the card hands over natively.
+        return max(raw1440, key=lambda x: (x[2], x[3].lower() == "nv12"))
     return max(modes, key=lambda x: (x[0] * x[1], x[2]))
 
 

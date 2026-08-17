@@ -189,13 +189,28 @@ the pad, so changing which controller is assigned keeps it.
 On the Switch: **System Settings → Controllers and Sensors → Pro Controller
 Wired Communication → ON**.
 
-**Video** — the window opens by default at 4K60 (`--no-window` for a headless
-console bridge). `--list-modes` shows what your card offers,
-`--capture-mode 1920x1080@240` to pick one. **F11** toggles borderless
-fullscreen. A mode must be requested explicitly or DirectShow hands out 640×480;
-4K60 and the other high modes are MJPEG only, since raw 4K60 will not fit over
-USB. The card's HDMI passthrough never reaches the PC, so only the capture path
-can feed the window.
+**Video** — the window opens by default at **1440p60 raw** (`--no-window` for a
+headless console bridge). `--list-modes` shows what your card offers,
+`--capture-mode 3840x2160` to override. **F11** toggles borderless fullscreen.
+
+1440p raw is the default because it is the highest mode that actually holds 60.
+Measured on an RX 9070 XT / Ryzen 7 7700X:
+
+| Mode | Frame rate | Dropped |
+| --- | --- | --- |
+| 2560×1440@60 nv12 | **59.0 / 60** | 1 |
+| 3840×2160@60 mjpeg | 40.6 / 60 | 129 |
+| 2560×1440@144 mjpeg | 90.8 / 144 | 386 |
+
+4K60 is MJPEG only — the card caps raw at 4K30 — and MJPEG costs a CPU decode
+plus a software colour conversion on every frame. Neither GPU decode nor more
+decoder threads helps: AMD and NVIDIA have no MJPEG hardware decoder, and
+raising `--avcodec-threads` past 4 makes it worse. Raw skips both steps, so the
+frames go straight to the GPU.
+
+A mode must be requested explicitly or DirectShow hands out 640×480. The card's
+HDMI passthrough never reaches the PC, so only the capture path can feed the
+window.
 
 ## Recording
 
