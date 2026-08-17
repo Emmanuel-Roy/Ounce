@@ -1,6 +1,6 @@
 @echo off
 REM ===========================================================================
-REM Build bin\OunceClient.exe - a standalone bridge with no Python needed.
+REM Build bin\client\OunceClient.exe - a standalone bridge with no Python needed.
 REM
 REM The exe exists mainly so Steam can see it: Steam's "Add a Non-Steam Game"
 REM browser filters to *.exe, so a .bat is invisible there unless you switch
@@ -28,7 +28,7 @@ python -m PyInstaller ^
   --onedir ^
   --console ^
   --name OunceClient ^
-  --distpath ..\bin ^
+  --distpath ..\bin\client ^
   --workpath "%TEMP%\ounce_pyi_build" ^
   --specpath "%TEMP%\ounce_pyi_build" ^
   --hidden-import pygame ^
@@ -42,7 +42,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [+] Built ..\bin\OunceClient\OunceClient.exe
+echo [+] Built ..\bin\client\OunceClient\OunceClient.exe
 echo     Add THAT exe to Steam as a Non-Steam Game, then enable Steam Input.
 echo     Keep the whole OunceClient folder together - the exe needs _internal\.
 endlocal

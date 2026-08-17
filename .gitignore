@@ -18,7 +18,7 @@ __pycache__/
 # Captured video and input logs (bin/recordings, one level above the exe)
 recordings/
 
-# bin/OunceClient/ is committed deliberately - the point of bin/ is that you can
+# bin/client/OunceClient/ is committed deliberately - the point of bin/ is that you can
 # clone and run without a toolchain. It is ~149MB across 181 files, so avoid
 # rebuilding it in commits that do not need to change it.
 

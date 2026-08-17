@@ -13,6 +13,8 @@ keyboard / pads -> Windows client -> USB serial -> Pico 2 W master
                                        player1 player2 player3 player4
 ```
 
+![The Ounce PCB — four servant Picos around the Pico 2 W master](Ounce-Hardware/pcb/board.png)
+
 ## Parts
 
 | Qty | Part | Purpose |
@@ -28,7 +30,10 @@ Capture card is optional — run with `--no-preview` for input only.
 ## Layout
 
 ```
-bin/               Flash these: OunceMaster.uf2, OunceServant.uf2, OunceClient/
+bin/
+├── firmware/      OunceMaster.uf2, OunceServant.uf2   <-- flash these
+├── client/        OunceClient/ - the app, no Python needed
+└── pcb/           Ounce-PCB-fab.zip - gerbers + drill, ready to order
 Ounce-Client/      Windows client: test_bridge.py, wiring_test.py, build_exe.bat
 Ounce-Hardware/    master-firmware/, servant-firmware/, pcb/, pico-sdk/
 ```
@@ -64,6 +69,13 @@ intermittent garbage rather than a clean failure. Bus is 4 MHz, SPI mode 1.
 Servants are numbered purely by which CS pin they are wired to, so any Pico
 works in any slot.
 
+Breadboard and jumpers work fine — this is the build the firmware was developed
+against, and it holds 94–100% packet delivery at 4 MHz:
+
+<img src="Ounce-Hardware/handwired.jpg" width="480" alt="The same bus hand-wired on breadboards, Pico 2 W in the middle">
+
+The PCB is the same eleven nets, tidier.
+
 Verify before going further:
 
 ```bash
@@ -81,8 +93,8 @@ Prebuilt images are in `bin/` — no build needed.
 
 | Board | Hold BOOTSEL, plug in, drive appears | Drag on |
 | --- | --- | --- |
-| Servants (×4) | `RPI-RP2` | `bin/OunceServant.uf2` |
-| Master | `RP2350` | `bin/OunceMaster.uf2` |
+| Servants (×4) | `RPI-RP2` | `bin/firmware/OunceServant.uf2` |
+| Master | `RP2350` | `bin/firmware/OunceMaster.uf2` |
 
 All four servants get the **same** file; each learns its player number from its
 CS pin.
@@ -132,7 +144,7 @@ python Ounce-Client/test_bridge.py
 `python-vlc` is only the binding — also install VLC itself, at the same
 bit-width as your Python, or video will not start.
 
-`Ounce-Client\build_exe.bat` rebuilds `bin\OunceClient\`. It uses `--onedir`
+`Ounce-Client\build_exe.bat` rebuilds `bin\client\OunceClient\`. It uses `--onedir`
 deliberately: a onefile build relaunches itself as a child process, and Steam
 Input only instruments the process Steam launched. Keep the folder together —
 the exe needs `_internal\` beside it.
@@ -214,7 +226,7 @@ anything to detect, and Steam Input only turns it into one for processes **Steam
 launches itself** — running the exe directly will never see it.
 
 1. **Steam → Games → Add a Non-Steam Game → Browse** →
-   `bin\OunceClient\OunceClient.exe`
+   `bin\client\OunceClient\OunceClient.exe`
 2. Right-click → **Properties → Controller → Enable Steam Input**
 3. **Edit Layout** → bind sticks to **Joystick Move**, *not* D-Pad
 4. Launch from Steam, then **click the window once** — Steam only leaves
