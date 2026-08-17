@@ -20236,6 +20236,7 @@
 		(uuid "3c1b6199-3cbc-47b8-8add-2d3342d04880")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 5.5 2.1)
 				(thickness 0.8)
 			)
@@ -20248,6 +20249,7 @@
 		(uuid "e94aa018-adb0-4d43-9145-548289d7fc84")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 6 4)
 				(thickness 1)
 			)
@@ -20260,6 +20262,7 @@
 		(uuid "f3d914cd-a5ff-443f-aeda-60fe2f3a404c")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20272,6 +20275,7 @@
 		(uuid "1391030c-053f-4651-b4b2-b7f1f15c4195")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20284,6 +20288,7 @@
 		(uuid "21cd6cf4-22fd-4635-aa00-56224059b2fa")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20296,6 +20301,7 @@
 		(uuid "f76f272d-6cac-4780-8cc0-0b4706a2cc34")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20308,6 +20314,7 @@
 		(uuid "658bab7c-2675-4855-bc6d-f57c122d3201")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20320,6 +20327,7 @@
 		(uuid "3e38581e-86da-416a-a475-8d232b17a571")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20332,6 +20340,7 @@
 		(uuid "72253d42-1281-4d0c-a910-1ba91ebab9c4")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20344,6 +20353,7 @@
 		(uuid "71541ca4-f551-40b9-8f5b-0851e78b14f9")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20356,6 +20366,7 @@
 		(uuid "b34957f4-8895-4c50-842e-3325991ead82")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
@@ -20368,11 +20379,116 @@
 		(uuid "77dd1f07-d82d-4ccd-b89f-f009cd1a2ebb")
 		(effects
 			(font
+				(face "Times New Roman")
 				(size 8 6.2)
 				(thickness 1.1)
 			)
 			(justify mirror)
 		)
+	)
+	(segment
+		(start 115.11 80.95)
+		(end 132.889999 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "023a8494-1a86-4418-a9c7-8c5588e07b6d")
+	)
+	(segment
+		(start 163 119.05)
+		(end 163 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "1278abb9-8c6a-4994-8f37-e53526bc396e")
+	)
+	(segment
+		(start 167.11 80.95)
+		(end 184.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "27c4e34d-9a15-47ab-b8fc-4a9a65a78aba")
+	)
+	(segment
+		(start 184.89 80.95)
+		(end 193.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "2a4acfdd-547a-4296-9eee-184c7008f228")
+	)
+	(segment
+		(start 163 80.95)
+		(end 167.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "317a8954-652f-482c-b474-cf242e8669b3")
+	)
+	(segment
+		(start 141.11 119.05)
+		(end 158.89 119.05)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "33afc703-c23e-4cf3-bc14-a89ea1694228")
+	)
+	(segment
+		(start 132.889999 80.95)
+		(end 137 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "3ea1f9d5-9286-423f-bcca-32313af94616")
+	)
+	(segment
+		(start 193.11 80.95)
+		(end 210.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "5ad078f8-c0b8-4b55-91dd-8055703ec689")
+	)
+	(segment
+		(start 137 119.05)
+		(end 141.11 119.05)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "60df6c20-6e64-4cf9-a6e7-7c5672c8a56c")
+	)
+	(segment
+		(start 158.89 119.05)
+		(end 163 119.05)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "60fd99e4-040a-4266-a512-db2706362a36")
+	)
+	(segment
+		(start 137 80.95)
+		(end 137 119.05)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "83517785-57f9-46e5-9c22-b787c3526c3c")
+	)
+	(segment
+		(start 106.89 80.95)
+		(end 115.11 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "b7a28867-1be6-43f4-9cb1-10a32c5376dd")
+	)
+	(segment
+		(start 89.11 80.95)
+		(end 106.89 80.95)
+		(width 0.25)
+		(layer "F.Cu")
+		(net "GND")
+		(uuid "f745fab2-c272-469a-a6f0-21e08ea77fa2")
 	)
 	(embedded_fonts no)
 )
