@@ -19,16 +19,33 @@ it.
 ## App icon
 
 `..\ounce.ico` (exe icon) and `..\ounce_icon.png` (pygame window icon) are both
-derived from `icon.png`, cropped to head-and-shoulders because the wordmark is
-unreadable below 48 px. From `Ounce-Client\`:
+derived from `icon.png`. The `.ico` carries **two different crops**, because
+"Ounce" is a smear below 48 px but the mark is worth having where it fits:
+
+| Frame | Art | Where Windows uses it |
+| --- | --- | --- |
+| 16–40 px | Character only | Taskbar, title bar, list and detail views |
+| 48–256 px | Full mark, wordmark included | Large/extra-large icons, the properties dialog, Steam's tile |
+
+`ounce_icon.png` is character-only at every size: pygame hands SDL one surface
+for both the title bar and the taskbar, and both are small.
+
+Run this from `Ounce-Client\` after changing `icon.png`, then `build_exe.bat`:
 
 ```python
 from PIL import Image
-crop = Image.open("Graphics/icon.png").convert("RGBA").crop((285, 110, 835, 660))
-crop.resize((256, 256), Image.LANCZOS).save("ounce_icon.png")
-crop.save("ounce.ico",
-          sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (40, 40),
-                 (48, 48), (64, 64), (128, 128), (256, 256)])
+
+full = Image.open("Graphics/icon.png").convert("RGBA")
+char = full.crop((285, 110, 835, 660))
+SMALL, LARGE = [16, 20, 24, 32, 40], [48, 64, 128, 256]
+
+char.resize((256, 256), Image.LANCZOS).save("ounce_icon.png")
+
+frames = {s: char.resize((s, s), Image.LANCZOS) for s in SMALL}
+frames.update({s: full.resize((s, s), Image.LANCZOS) for s in LARGE})
+frames[256].save("ounce.ico", sizes=[(s, s) for s in SMALL + LARGE],
+                 append_images=[f for s, f in sorted(frames.items()) if s != 256])
 ```
 
-Re-run that after changing `icon.png`, then `build_exe.bat`.
+Pillow uses an exact size match from `append_images` when it finds one and
+resizes the base image otherwise, which is what lets one `.ico` hold both crops.

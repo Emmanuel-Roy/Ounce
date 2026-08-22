@@ -6,9 +6,11 @@ REM The exe exists mainly so Steam can see it: Steam's "Add a Non-Steam Game"
 REM browser filters to *.exe, so a .bat is invisible there unless you switch
 REM the file-type dropdown to All Files.
 REM
-REM ounce.ico is the exe icon (what Steam and Explorer show); ounce_icon.png is
-REM the same art bundled for pygame.display.set_icon(). Both are generated from
-REM Graphics\icon.png - see Graphics\README.md beside this script.
+REM ounce.ico is the exe icon (what Steam and Explorer show) and carries the
+REM wordmark on its 48px-and-up frames, the character alone below that;
+REM ounce_icon.png is the character crop bundled for pygame.display.set_icon().
+REM Both are generated from Graphics\icon.png - see Graphics\README.md beside
+REM this script.
 REM
 REM Requires: pip install pyinstaller
 REM ===========================================================================
