@@ -108,6 +108,16 @@ def app_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def bundled_path(name):
+    """A file that ships inside the build rather than beside it.
+
+    PyInstaller unpacks --add-data files into sys._MEIPASS, which for an onedir
+    build is the _internal\ folder - not app_dir(), which is the folder holding
+    the exe."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, name)
+
+
 def recordings_root():
     """recordings\\ one level above the client.
 
@@ -1780,6 +1790,13 @@ def _open_status_window(pygame):
     into game mode."""
     global _window
     pygame.display.set_caption("Ounce Bridge - keep focused for Steam Input")
+    # Before set_mode(), or SDL has already created the window with its default
+    # icon. PNG rather than the .ico the exe carries: SDL_image rejects
+    # PNG-compressed ICO frames, which is what a modern multi-size .ico is.
+    try:
+        pygame.display.set_icon(pygame.image.load(bundled_path("ounce_icon.png")))
+    except Exception:
+        pass   # decorative only - never keep the window from opening over it
     # Sized for the capture preview: this is the same window Steam Input needs
     # focused, so the game view and the focus target are one and the same.
     _window = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)

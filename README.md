@@ -1,3 +1,5 @@
+<img src="Ounce-Client/Graphics/banner.jpg" alt="Ounce">
+
 # Ounce
 
 Play your Nintendo Switch from anywhere. Four Picos each appear to the Switch as
@@ -14,6 +16,12 @@ keyboard / pads -> Windows client -> USB serial -> Pico 2 W master
 ```
 
 ![The Ounce PCB — four servant Picos around the Pico 2 W master](Ounce-Hardware/pcb/board.png)
+
+> **The artwork is AI-generated.** The banner, logo and app icon all came out of
+> an image model — this is a hobby project and I could not afford to pay an
+> artist for it. Everything in [`Ounce-Client/Graphics/`](Ounce-Client/Graphics/)
+> is that; the photos of the board and the wiring are real. Artists welcome —
+> open an issue.
 
 ## Parts
 
@@ -35,6 +43,7 @@ bin/
 ├── client/        OunceClient/ - the app, no Python needed
 └── pcb/           Ounce-PCB-fab.zip - gerbers + drill, ready to order
 Ounce-Client/      Windows client: test_bridge.py, wiring_test.py, build_exe.bat
+└── Graphics/      AI-generated logo, icon and banner - all of it, see its README
 Ounce-Hardware/    master-firmware/, servant-firmware/, pcb/, pico-sdk/
 ```
 
@@ -147,7 +156,10 @@ bit-width as your Python, or video will not start.
 `Ounce-Client\build_exe.bat` rebuilds `bin\client\OunceClient\`. It uses `--onedir`
 deliberately: a onefile build relaunches itself as a child process, and Steam
 Input only instruments the process Steam launched. Keep the folder together —
-the exe needs `_internal\` beside it.
+the exe needs `_internal\` beside it. The exe icon and the window icon both come
+from `Graphics/icon.png` beside it —
+[`Ounce-Client/Graphics/README.md`](Ounce-Client/Graphics/README.md) has the
+one-liner that regenerates them.
 
 ## Running
 
@@ -246,6 +258,10 @@ launches itself** — running the exe directly will never see it.
 3. **Edit Layout** → bind sticks to **Joystick Move**, *not* D-Pad
 4. Launch from Steam, then **click the window once** — Steam only leaves
    Desktop mode for a focused window, or the pad stays in mouse mode
+
+Steam shows a blank grid tile for non-Steam games. Right-click → **Manage → Set
+custom artwork** and point it at `Ounce-Client/Graphics/library.png` (the
+600×900 portrait) and `Ounce-Client/Graphics/banner.jpg` (the wide header).
 
 Sticks bound to D-Pad are cut to eight directions before Ounce sees them and the
 analog range cannot be recovered. Set Launch Options to `--probe` to check:
