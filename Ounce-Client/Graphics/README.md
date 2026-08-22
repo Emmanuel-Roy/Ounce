@@ -9,7 +9,7 @@ be credited properly.
 | --- | --- |
 | `logo.png` | Wordmark on its own, transparent |
 | `icon.png` | Wordmark + character, square, transparent — source of the app icon |
-| `library.png` | 600×900 portrait, for Steam's library / grid art |
+| `library.png` | 600×900 portrait for Steam's library / grid art — opaque, since Steam renders a transparent tile black |
 | `banner.jpg` | 1024×512 wide header, top of the README |
 | `girl.jpg` | The character on her own, opaque background |
 
