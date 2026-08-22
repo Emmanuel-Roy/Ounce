@@ -112,7 +112,7 @@ def bundled_path(name):
     """A file that ships inside the build rather than beside it.
 
     PyInstaller unpacks --add-data files into sys._MEIPASS, which for an onedir
-    build is the _internal\ folder - not app_dir(), which is the folder holding
+    build is the _internal\\ folder - not app_dir(), which is the folder holding
     the exe."""
     base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, name)
@@ -348,7 +348,7 @@ def probe_input(seconds=60.0):
     if not pads:
         # Fall back to raw joysticks: under Steam the virtual pad may not have
         # a GameController mapping yet, and we still want to see it.
-        pads = [(i, _pg.joystick.Joystick(i).get_name())
+        pads = [(i, pad_name(i))
                 for i in range(_pg.joystick.get_count())
                 if _pg.joystick.Joystick(i).get_name().strip().lower()
                 not in OUNCE_SELF_NAMES]
@@ -371,9 +371,14 @@ def probe_input(seconds=60.0):
         jj.init()
         tag = "  <-- Ounce target (ignored as input)" \
             if jj.get_name().strip().lower() in OUNCE_SELF_NAMES else ""
-        print(f"   [{i}] {jj.get_name()}  axes={jj.get_numaxes()} "
+        # Shown name, then what SDL reported and the USB ids behind it: when a
+        # pad is named wrongly, those two are what say why.
+        vid, pid = pad_usb_ids(i)
+        ids = f"{vid:04x}:{pid:04x}" if vid and pid else "no usb ids"
+        print(f"   [{i}] {pad_name(i)}  axes={jj.get_numaxes()} "
               f"btn={jj.get_numbuttons()} hat={jj.get_numhats()} "
               f"mapped={_sdl_controller.is_controller(i)}{tag}")
+        print(f"        sdl name: {jj.get_name()!r}  [{ids}]")
 
     if not pads:
         print("\n[-] No usable non-Ounce controller.")
@@ -409,6 +414,122 @@ def probe_input(seconds=60.0):
     print("\n")
 
 
+# --------------------------------------------------------------------------
+# Pad naming.
+#
+# SDL's name for a pad is whatever the driver it came through reports, and
+# XInput reports no product name at all - every pad reached that way is
+# "XInput Controller #N" regardless of what is actually in your hands. The USB
+# vendor and product ids ARE carried, packed into the SDL joystick GUID, so
+# that is where the real identity has to come from.
+# --------------------------------------------------------------------------
+
+# Names that identify nothing. Matched as a prefix, so the "#1" that XInput
+# appends is still caught.
+GENERIC_PAD_NAMES = ("xinput controller", "controller", "gamepad",
+                     "usb gamepad", "generic", "wireless controller")
+
+# (vendor, product) -> what people actually call it.
+PAD_NAMES = {
+    (0x054C, 0x0CE6): "DualSense",
+    (0x054C, 0x0DF2): "DualSense Edge",
+    (0x054C, 0x09CC): "DualShock 4",
+    (0x054C, 0x05C4): "DualShock 4",
+    (0x054C, 0x0BA0): "DualShock 4 (dongle)",
+    (0x054C, 0x0268): "DualShock 3",
+    (0x045E, 0x028E): "Xbox 360 Controller",
+    (0x045E, 0x02FF): "Xbox One Controller",
+    (0x045E, 0x02EA): "Xbox One Controller",
+    (0x045E, 0x0B12): "Xbox Series Controller",
+    (0x045E, 0x0B13): "Xbox Series Controller",
+    (0x045E, 0x0B00): "Xbox Elite 2",
+    # Spelled exactly as OUNCE_SELF_NAMES has it: the Ounce targets enumerate
+    # as this, and the self-filter compares names.
+    (0x057E, 0x2009): "Nintendo Switch Pro Controller",
+    (0x057E, 0x2006): "Joy-Con (L)",
+    (0x057E, 0x2007): "Joy-Con (R)",
+    (0x28DE, 0x1102): "Steam Controller",
+    (0x28DE, 0x1142): "Steam Controller (dongle)",
+    (0x28DE, 0x11FF): "Steam Input",
+    (0x28DE, 0x1205): "Steam Deck",
+}
+
+VENDOR_NAMES = {0x054C: "Sony", 0x045E: "Xbox", 0x057E: "Nintendo",
+                0x28DE: "Valve", 0x0F0D: "Hori", 0x0E6F: "PDP",
+                0x24C6: "PowerA", 0x146B: "Nacon", 0x20D6: "PowerA"}
+
+_under_steam = False       # set by gamepad_available; see pad_name
+
+
+def pad_usb_ids(index):
+    """(vendor, product) for a joystick, from its SDL GUID. (None, None) if
+    unavailable - Bluetooth pads and virtual devices do not always carry them."""
+    try:
+        guid = _pg.joystick.Joystick(index).get_guid()
+    except Exception:
+        return (None, None)
+    if not guid or len(guid) < 20:
+        return (None, None)
+
+    def le16(s):
+        # SDL packs the GUID little-endian, so each 16-bit field reads back as
+        # two byte-swapped hex pairs: "4c05" is 0x054C.
+        try:
+            return int(s[2:4] + s[0:2], 16) or None
+        except ValueError:
+            return None
+
+    return (le16(guid[8:12]), le16(guid[16:20]))
+
+
+def pad_name(index):
+    """What to call pad `index` on screen.
+
+    Falls back through: a known vendor/product, the SDL GameController name,
+    then the raw joystick name. Whatever comes out, something is always
+    returned - a pad with no name is worse than a badly named one."""
+    try:
+        raw = (_pg.joystick.Joystick(index).get_name() or "").strip()
+    except Exception:
+        raw = ""
+    gc = ""
+    try:
+        if _sdl_controller.is_controller(index):
+            gc = (_sdl_controller.name_forindex(index) or "").strip()
+    except Exception:
+        pass
+
+    vid, pid = pad_usb_ids(index)
+    best = raw or gc
+    low = best.lower()
+    generic = (not best) or any(low.startswith(g) for g in GENERIC_PAD_NAMES)
+
+    # Valve's own ids first: under Steam Input the pad we are handed is Steam's,
+    # whatever is plugged in behind it, and saying so is more use than naming
+    # the hardware Steam is hiding.
+    if vid == 0x28DE:
+        return PAD_NAMES.get((vid, pid), "Steam Input")
+
+    if generic:
+        if _under_steam:
+            # Inferred, not reported: Steam Input presents its virtual pad as a
+            # nameless XInput device indistinguishable from a real 360 pad, so
+            # the only evidence that this is Steam's is that Steam launched us.
+            # The trailing number is kept so two of them stay tellable apart.
+            m = re.search(r"#\s*(\d+)", raw)
+            return f"Steam Input #{m.group(1)}" if m else "Steam Input"
+        known = PAD_NAMES.get((vid, pid))
+        if known:
+            return known
+        if vid in VENDOR_NAMES:
+            return f"{VENDOR_NAMES[vid]} pad"
+        return best or f"pad {index}"
+
+    # A named pad still gets normalised when the ids are recognised, so a
+    # DualSense is "DualSense" rather than SDL's "PS5 Controller".
+    return PAD_NAMES.get((vid, pid), best)
+
+
 def list_real_pads():
     """Controllers that are not our own emulated targets.
 
@@ -419,8 +540,11 @@ def list_real_pads():
         return []
     out = []
     for i in range(_pg.joystick.get_count()):
-        name = _pg.joystick.Joystick(i).get_name()
-        if name.strip().lower() in OUNCE_SELF_NAMES:
+        raw = _pg.joystick.Joystick(i).get_name()
+        name = pad_name(i)
+        # Both names checked: the display name is what a Switch Pro target
+        # normalises to, the raw one is what it reports.
+        if raw.strip().lower() in OUNCE_SELF_NAMES or name.lower() in OUNCE_SELF_NAMES:
             continue
         if not _sdl_controller.is_controller(i):
             continue      # no SDL mapping -> its buttons would be arbitrary
@@ -538,7 +662,10 @@ def resolve_pad(ref):
         pass
     ref_l = ref.lower()
     for i in range(count):
-        if ref_l in _pg.joystick.Joystick(i).get_name().lower():
+        # Matched against both names, so --assign 1=pad:dualsense works off the
+        # name shown in the menu as well as off whatever SDL called it.
+        if (ref_l in _pg.joystick.Joystick(i).get_name().lower()
+                or ref_l in pad_name(i).lower()):
             return i
     return None
 
@@ -761,6 +888,25 @@ WINDOW_W, WINDOW_H = 1280, 720
 CAPTURE_W, CAPTURE_H = 960, 540      # ffmpeg-path pipe size only
 _NO_WINDOW = 0x08000000        # subprocess CREATE_NO_WINDOW, so ffmpeg stays hidden
 
+# How many milliseconds the capture pipeline is allowed to buffer.
+#
+# This was 0 everywhere, on the reasoning that any buffer is latency you can
+# feel. It is - but zero is past the point where the audio output can absorb a
+# scheduling hiccup, and a starved audio output does not arrive late, it
+# crackles and drops out. A small buffer is the difference between the two.
+#
+# 100ms: 50 was measured on this machine as almost-but-not-quite enough (an
+# occasional crackle), so this is the next step up rather than a guess from
+# scratch. Still a third of VLC's own 300ms default for a live input. Tunable
+# with --capture-latency because the floor depends on the machine, and only
+# running it on the hardware shows where that floor is.
+CAPTURE_LATENCY_MS = 100
+
+
+def set_capture_latency(ms):
+    global CAPTURE_LATENCY_MS
+    CAPTURE_LATENCY_MS = max(0, int(ms))
+
 
 def ffmpeg_exe():
     """Path to an ffmpeg binary: PATH first, else the pip-installed one."""
@@ -939,11 +1085,10 @@ class Toolbar:
         self.modes_comp = []
         self.device = None
         self.mode = None
-        self.hdr = False
         self.pads = []               # [(idx, name)] real controllers
         self.slots = {}              # slot -> pad index, or None for no pad
         self.slot_kb = {}            # slot -> KB_FULL | KB_AUX | KB_OFF
-        self.open_menu = None        # None | 'device' | 'mode' | 'hdr' | 'slot0'.. | 'keys'
+        self.open_menu = None        # None | 'device' | 'mode' | 'slot0'.. | 'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
         self.capture_action = None   # action awaiting a keypress, if any
@@ -978,7 +1123,10 @@ class Toolbar:
                 return "H/C" if short else "Keyboard (Home/Capture only)"
             return "off" if short else "Disabled"
         name = next((n for i, n in self.pads if i == pad), f"pad{pad}")
-        name = name.split("(")[0].strip()[:12 if short else 40]
+        # Only the short form drops a parenthesised suffix. In the menu it is
+        # kept, because that is where "Joy-Con (L)" has to stay tellable from
+        # "Joy-Con (R)".
+        name = (name.split("(")[0].strip()[:14] if short else name[:40])
         if kb == KB_FULL:
             return name + (" + kbd" if short else " + keyboard")
         if kb == KB_AUX:
@@ -1027,7 +1175,6 @@ class Toolbar:
         # Live summary next to the button, so the common case needs no clicks.
         on = [f"P{s + 1}" for s in range(NUM_SLOTS) if self.slot_active(s)]
         bits = [mode_label(self.mode) if self.mode else "no mode",
-                "HDR on" if self.hdr else "HDR off",
                 ("+".join(on) if on else "no controllers")]
         summary = f.render("   " + "   |   ".join(bits), True, (150, 150, 168))
         surface.blit(summary, (rect.right + 4, rect.y + 3))
@@ -1049,7 +1196,6 @@ class Toolbar:
                      ("go", f"Input :  {self.device or 'none'}", "device"),
                      ("go", f"Mode  :  {mode_label(self.mode) if self.mode else 'default'}",
                       "mode"),
-                     ("go", f"HDR   :  {'on' if self.hdr else 'off'}", "hdr"),
                      (None, "-- controllers --", None)]
             # Spell out what each controller is currently driven by, rather
             # than an abbreviation - this is the screen people come here to read.
@@ -1059,9 +1205,6 @@ class Toolbar:
                       ("go", "Remap keyboard controls...", "keys")]
         elif self.open_menu == "device":
             items = [("device", d, d) for d in self.devices]
-        elif self.open_menu == "hdr":
-            items = [("hdr", "HDR on  (pass through, no tone mapping)", True),
-                     ("hdr", "HDR off (tone map to SDR)", False)]
         elif self.open_menu == "keys":
             self._draw_keymap(surface, f)
             return
@@ -1116,8 +1259,6 @@ class Toolbar:
                     sel = value == self.device
                 elif kind == "mode":
                     sel = value == self.mode
-                elif kind == "hdr":
-                    sel = value == self.hdr
                 elif kind == "slot":
                     sel = self.slots.get(value[0]) == value[1]
                 else:
@@ -1238,39 +1379,42 @@ class VlcPreview:
     The window handle is the pygame window's, so it is still the window Steam
     Input attaches to."""
 
-    # One libvlc Instance per HDR setting, kept for the life of the process.
+    # One libvlc Instance, kept for the life of the process.
     # Releasing an Instance and building a new one on every device/mode change
     # deadlocks libvlc, which is what made switching capture modes hang. Only
     # the MediaPlayer is recreated per change.
     _instances = {}
 
     @classmethod
-    def _instance(cls, vlc, hdr):
-        inst = cls._instances.get(bool(hdr))
+    def _instance(cls, vlc):
+        # Keyed by the caching value so it is set from the same knob the media
+        # options use; in practice that is fixed for the life of the process,
+        # so there is still exactly one Instance.
+        key = CAPTURE_LATENCY_MS
+        inst = cls._instances.get(key)
         if inst is None:
+            # live-caching is the one that matters: dshow:// is a live input,
+            # so the file and network values never apply to it.
             args = [
                 "--no-video-title-show",
                 "--quiet",
                 "--network-caching=0",
-                "--live-caching=0",
+                f"--live-caching={CAPTURE_LATENCY_MS}",
                 "--file-caching=0",
-                # HDR handling. An HDR10 capture shown untouched on an SDR
-                # display looks washed out, so "off" tone maps it down with
-                # Hable (VLC's recommended filmic curve); "on" uses a linear
-                # peak-to-peak stretch to pass the range through for a display
-                # that can actually show it.
-                "--tone-mapping=5" if hdr else "--tone-mapping=3",
             ]
             inst = vlc.Instance(args)
-            cls._instances[bool(hdr)] = inst
+            cls._instances[key] = inst
         return inst
 
-    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None, hdr=False,
+    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None,
                  record_path=None):
         self.error = None
         self._player = None
         self._inst = None
         self.record_path = record_path
+        # Kept so fit() can tell a window that merely rounds off the source
+        # shape from one that is genuinely a different shape.
+        self.source_size = (mode[0], mode[1]) if mode and mode[1] else None
         try:
             import vlc
         except Exception:
@@ -1278,7 +1422,7 @@ class VlcPreview:
             return
         try:
             # --no-xlib is harmless on Windows; the rest keeps latency down.
-            self._inst = self._instance(vlc, hdr)
+            self._inst = self._instance(vlc)
             self._player = self._inst.media_player_new()
             # The mode MUST be requested explicitly. DirectShow otherwise hands
             # over the first advertised format, which on this card is 640x480 -
@@ -1286,7 +1430,7 @@ class VlcPreview:
             mrl = "dshow://"
             opts = [f":dshow-vdev={video_dev}",
                     f":dshow-adev={audio_dev or 'none'}",
-                    ":live-caching=0"]
+                    f":live-caching={CAPTURE_LATENCY_MS}"]
             if mode:
                 w, h, fps, pixfmt = mode
                 opts += [f":dshow-size={w}x{h}", f":dshow-fps={fps}"]
@@ -1324,21 +1468,38 @@ class VlcPreview:
             self.stop()
 
     def fit(self, window_size=None):
-        """Fill the window completely, with no letterbox or pillarbox bars.
+        """Fill the window without ever distorting the picture.
 
         Leaving the aspect ratio unset makes VLC letterbox to the source's own
         aspect, which leaves bars whenever the window is even slightly off that
-        shape (and window chrome makes that the normal case). Telling VLC the
-        display aspect IS the window's aspect makes it fill edge to edge. The
-        window is separately snapped to the source aspect, so this fills
-        without visibly distorting anything."""
+        shape - and window chrome makes being a pixel or two off the normal
+        case. Telling VLC the display aspect IS the window's aspect absorbs
+        that rounding and fills edge to edge.
+
+        That trick is only safe while the window really is the source's shape,
+        which snap_window_to_aspect keeps it at. Fullscreen is the case where
+        it cannot: the geometry is the monitor's, so on anything that is not
+        the source's aspect - 16:10, ultrawide, a 16:9 monitor showing a 4:3
+        source - claiming the window aspect stretches the picture to fill it.
+        There the source aspect is used instead and VLC letterboxes to it."""
         try:
             self._player.video_set_scale(0.0)          # 0 = fit to window
+            ratio = None
             if window_size and window_size[1]:
                 w, h = int(window_size[0]), int(window_size[1])
-                self._player.video_set_aspect_ratio(f"{w}:{h}")
-            else:
-                self._player.video_set_aspect_ratio(None)
+                if self.source_size:
+                    sw, sh = self.source_size
+                    src = sw / sh
+                    # 1%: comfortably more than the rounding snapping leaves,
+                    # far less than the gap to the next standard aspect (16:9
+                    # to 16:10 is 11%).
+                    ratio = (f"{w}:{h}" if abs(w / h - src) <= 0.01 * src
+                             else f"{sw}:{sh}")
+                else:
+                    # No mode was negotiated, so there is no source shape to
+                    # compare against; let VLC letterbox to the stream's own.
+                    ratio = None
+            self._player.video_set_aspect_ratio(ratio)
         except Exception:
             pass
 
@@ -1443,8 +1604,13 @@ class CapturePreview:
             cmd += ["-video_size", in_size]
         if in_fps:
             cmd += ["-framerate", str(in_fps)]
+        # decrease+pad rather than a plain scale: a bare scale=w:h squashes any
+        # source that is not the pipe's shape (a 4:3 or ultrawide input into a
+        # 16:9 pipe). The padding keeps every frame exactly w*h*3 bytes, which
+        # the reader below depends on to reshape the buffer.
         cmd += ["-i", f"video={device_name}",
-                "-vf", f"scale={w}:{h}",
+                "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                       f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
                 "-r", str(fps),
                 "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
         try:
@@ -1486,16 +1652,30 @@ class CapturePreview:
                 pass
 
     def blit_into(self, surface):
-        """Draw the newest frame scaled to the window. True if one was drawn."""
+        """Draw the newest frame into the window, keeping its aspect ratio.
+
+        Scaled to fit and centred rather than stretched to the window: the
+        window is not always the frame's shape - fullscreen makes it the
+        monitor's - and stretching to fill is what visibly distorts the
+        picture there. Whatever the fit leaves over is filled black.
+
+        True if a frame was drawn."""
         with self._lock:
             frame = self._frame
         if frame is None:
             return False
         try:
             surf = _pg.surfarray.make_surface(frame)
-            if surf.get_size() != surface.get_size():
-                surf = _pg.transform.smoothscale(surf, surface.get_size())
-            surface.blit(surf, (0, 0))
+            sw, sh = surf.get_size()
+            ww, wh = surface.get_size()
+            if (sw, sh) != (ww, wh):
+                scale = min(ww / sw, wh / sh)
+                surf = _pg.transform.smoothscale(
+                    surf, (max(1, int(sw * scale)), max(1, int(sh * scale))))
+            fw, fh = surf.get_size()
+            if (fw, fh) != (ww, wh):
+                surface.fill((0, 0, 0))
+            surface.blit(surf, ((ww - fw) // 2, (wh - fh) // 2))
             return True
         except Exception:
             return False
@@ -1893,7 +2073,7 @@ def pump_window(vlc_active=False, on_resize=None, on_click=None, on_key=None):
 
 
 def gamepad_available():
-    global _pg, _sdl_controller
+    global _pg, _sdl_controller, _under_steam
     if _pg is not None:
         return True
     try:
@@ -1909,6 +2089,7 @@ def gamepad_available():
         under_steam = any(os.environ.get(v) for v in
                           ("SteamAppId", "SteamGameId", "SteamClientLaunch",
                            "SteamOverlayGameId", "SteamEnv"))
+        _under_steam = under_steam      # pad_name uses it to spot Steam's pad
         os.environ.setdefault("SDL_JOYSTICK_HIDAPI_STEAM",
                               "0" if under_steam else "1")
         if under_steam:
@@ -1947,7 +2128,7 @@ def list_controllers():
     for i in range(_pg.joystick.get_count()):
         j = _pg.joystick.Joystick(i)
         j.init()
-        out.append((i, j.get_name(), _sdl_controller.is_controller(i)))
+        out.append((i, pad_name(i), _sdl_controller.is_controller(i)))
     return out
 
 
@@ -1982,7 +2163,7 @@ def open_controller(index=None):
 
     c = _sdl_controller.Controller(index)
     c.init()
-    print(f"[+] Using controller {index}: {_pg.joystick.Joystick(index).get_name()}")
+    print(f"[+] Using controller {index}: {pad_name(index)}")
     return c
 
 
@@ -2138,6 +2319,12 @@ def main():
                         help="Capture mode to request, e.g. 3840x2160@30 or 1920x1080@120. "
                              "Default: the highest pixels-per-second the card offers. "
                              "DirectShow gives you 640x480 unless a mode is requested.")
+    parser.add_argument("--capture-latency", type=int, default=CAPTURE_LATENCY_MS,
+                        metavar="MS",
+                        help="How much the VLC path may buffer, in ms. Default 100. "
+                             "Lower is less delay but starves the audio output: "
+                             "crackling and dropouts mean this is too low. Raise it "
+                             "(100-200) if the sound breaks up.")
     parser.add_argument("--list-modes", action="store_true",
                         help="List the capture card's supported modes and exit.")
     parser.add_argument("--capture-input-size", default=None, metavar="WxH",
@@ -2154,9 +2341,6 @@ def main():
     parser.add_argument("--no-window", action="store_true",
                         help="Run headless: no window, so no video, toolbar or "
                              "remapping, and slots are chosen at a console prompt.")
-    parser.add_argument("--hdr", action="store_true",
-                        help="Start with HDR passthrough instead of tone mapping to SDR. "
-                             "Toggleable from the toolbar.")
     parser.add_argument("--fullscreen", action="store_true",
                         help="Start in borderless fullscreen. F11 toggles it at any "
                              "time, Esc leaves it.")
@@ -2177,6 +2361,7 @@ def main():
     parser.add_argument("--trigger-threshold", type=float, default=0.5,
                         help="Analog trigger level counted as a ZL/ZR press (0..1). Default 0.5.")
     args = parser.parse_args()
+    set_capture_latency(args.capture_latency)
 
     if args.dump_config:
         write_default_config(args.dump_config)
@@ -2266,7 +2451,7 @@ def main():
             c = open_controller(idx)
             if c is None:
                 sys.exit(1)
-            opened_pads[idx] = (c, _pg.joystick.Joystick(idx).get_name())
+            opened_pads[idx] = (c, pad_name(idx))
         return opened_pads[idx]
 
     if args.config:
@@ -2341,7 +2526,7 @@ def main():
                 idx = next((i for i in range(_pg.joystick.get_count())
                             if _pg.joystick.Joystick(i).get_name().strip().lower()
                             not in OUNCE_SELF_NAMES), 0)
-                opened_pads.setdefault(idx, (c, _pg.joystick.Joystick(idx).get_name()))
+                opened_pads.setdefault(idx, (c, pad_name(idx)))
                 name = opened_pads[idx][1]
             else:
                 idx = resolve_pad(ref)
@@ -2465,9 +2650,10 @@ def main():
                 else:
                     print("    mode: card advertised none; letting DirectShow choose")
                 if aname:
-                    print(f"    audio: {aname} -> default Windows output")
-                vlc_preview = VlcPreview(hwnd, vname, aname, mode, hdr=args.hdr)
-                toolbar.hdr = args.hdr
+                    print(f"    audio: {aname} -> default Windows output "
+                          f"({CAPTURE_LATENCY_MS}ms buffer; raise "
+                          f"--capture-latency if it crackles)")
+                vlc_preview = VlcPreview(hwnd, vname, aname, mode)
                 if vlc_preview.error:
                     print(f"[!] VLC backend failed: {vlc_preview.error}")
                     print("    Falling back to the ffmpeg pipe (lower resolution).")
@@ -2641,7 +2827,6 @@ def main():
                 toolbar.recording = True
                 _swap_vlc(lambda: VlcPreview(
                     _video_child, toolbar.device, aud, toolbar.mode,
-                    hdr=toolbar.hdr,
                     record_path=os.path.join(d, "capture.avi")))
                 if vlc_preview.error:
                     toolbar.recording = False
@@ -2655,7 +2840,7 @@ def main():
                 # finalised when VLC closes it, so the log must not be cut
                 # short before the video it is timed against.
                 _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
-                                             toolbar.mode, hdr=toolbar.hdr))
+                                             toolbar.mode))
                 if recorder is not None:
                     rows, length = recorder.rows, recorder.elapsed()
                     recorder.close()
@@ -2665,8 +2850,8 @@ def main():
                           f"({rows} input rows)")
             return
 
-        if toolbar.recording and kind in ("device", "mode", "hdr"):
-            # Restarting the stream is how the device, mode and HDR settings
+        if toolbar.recording and kind in ("device", "mode"):
+            # Restarting the stream is how the device and mode settings
             # are applied, and that same restart truncates the file being
             # written. Refused rather than silently losing the take.
             print("[-] Stop recording before changing the capture settings.")
@@ -2704,14 +2889,6 @@ def main():
                   f"{'no controller' if src is None else src}")
             return
 
-        if kind == "hdr":
-            toolbar.hdr = value
-            print(f"[+] HDR {'on (passthrough)' if value else 'off (tone mapped)'}")
-            aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-            _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
-                                         toolbar.mode, hdr=value))
-            return
-
         new_dev = value if kind == "device" else toolbar.device
         new_modes = list_dshow_modes(new_dev) if kind == "device" else None
         new_mode = (pick_best_mode(new_modes) if kind == "device" else value)
@@ -2719,8 +2896,7 @@ def main():
         print(f"[+] Switching {kind} -> "
               f"{value if kind == 'device' else mode_label(value)}")
         aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-        _swap_vlc(lambda: VlcPreview(_video_child, new_dev, aud, new_mode,
-                                     hdr=toolbar.hdr))
+        _swap_vlc(lambda: VlcPreview(_video_child, new_dev, aud, new_mode))
         toolbar.set_sources(toolbar.devices,
                             new_modes if new_modes is not None
                             else (toolbar.modes_comp + toolbar.modes_raw),

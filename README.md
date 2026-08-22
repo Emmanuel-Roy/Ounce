@@ -295,9 +295,8 @@ restores the defaults below.
 | R-Stick U/D/L/R | `8` `0` `7` `9` | L / R | `U` `O` | ZL / ZR | `Y` `P` |
 | L3 / R3 | `Z` `X` | + / − | `N` `M` | Home / Capture | `H` `C` |
 
-The same dropdown holds the video device, capture mode (raw vs compressed), HDR
-toggle, and each player's input source. For pad mappings or a saved keyboard
-layout:
+The same dropdown holds the video device, capture mode (raw vs compressed) and
+each player's input source. For pad mappings or a saved keyboard layout:
 
 ```bash
 python test_bridge.py --dump-config mymap.json
