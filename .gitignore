@@ -25,3 +25,12 @@ recordings/
 # Specctra interchange files, regenerated from the board
 *.dsn
 *.ses
+
+# KiCad lock files - one appears beside the project while it is open in KiCad
+# and is deleted on close, so it only ever shows up mid-edit
+*.lck
+~*.lck
+
+# KiCad backups and autosaves
+*-backups/
+_autosave-*
