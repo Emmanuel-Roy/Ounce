@@ -148,6 +148,18 @@ is pinned to **2.2.0** because that is what GP2040-CE builds against — on 2.3.
 the servant fails to link, with mbedtls calling PSA crypto functions that its
 config leaves out.
 
+If that build dies in **picotool** rather than in the firmware (`No rule to make
+target ...compiler_depend.make` under `enc_bootloader_mbedtls`), the SDK is
+building picotool from source and failing at it — seen with the MinGW Makefiles
+generator. Point CMake at one that already exists instead:
+
+```bash
+cmake -B build -DSKIP_WEBBUILD=ON -DPICO_SDK_PATH=../../pico-sdk \
+      -Dpicotool_DIR=<some-existing-build>/_deps/picotool
+```
+
+That directory is the one holding `picotoolConfig.cmake`, not `picotool-build/`.
+
 **Client:**
 
 ```bash
