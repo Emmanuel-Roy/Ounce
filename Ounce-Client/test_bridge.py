@@ -912,6 +912,25 @@ def set_capture_latency(ms):
     CAPTURE_LATENCY_MS = max(0, int(ms))
 
 
+# How much audio the separate pipe queues ahead, in milliseconds.
+#
+# Only used when audio is split out of VLC. It buys back, for the sound alone,
+# the slack that --capture-latency used to give both streams together: audio
+# runs this far behind the picture, and the picture is not delayed at all.
+#
+# 100 because that is the figure already measured as comfortable on this machine
+# back when VLC was doing the buffering. Audio arriving after video is the
+# forgiving direction - broadcast practice tolerates about 125ms of it, against
+# roughly 45ms the other way - so there is room to be generous here in a way
+# there is not with --capture-latency.
+AUDIO_LATENCY_MS = 100
+
+
+def set_audio_latency(ms):
+    global AUDIO_LATENCY_MS
+    AUDIO_LATENCY_MS = max(0, int(ms))
+
+
 def ffmpeg_exe():
     """Path to an ffmpeg binary: PATH first, else the pip-installed one."""
     import shutil
@@ -1722,6 +1741,9 @@ class CaptureAudio:
         self._stop = threading.Event()
         self._proc = None
         self._stream = None
+        self._rate = rate
+        self._channels = channels
+        self.underruns = 0
 
         exe = ffmpeg_exe()
         if not exe:
@@ -1743,6 +1765,11 @@ class CaptureAudio:
             self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                           stderr=subprocess.DEVNULL,
                                           creationflags=_NO_WINDOW)
+            # No latency= here on purpose. It looks like the knob to reach for,
+            # but sounddevice already defaults to 'high', which measured 213ms
+            # of buffer on this machine - asking for AUDIO_LATENCY_MS instead
+            # measured 107ms and would HALVE the room available. The buffer was
+            # never the shortage; see _run() for what actually was.
             self._stream = sd.RawOutputStream(samplerate=rate, channels=channels,
                                               dtype="int16", blocksize=1024)
             self._stream.start()
@@ -1754,13 +1781,42 @@ class CaptureAudio:
         self._t.start()
 
     def _run(self):
-        chunk = 1024 * 2 * 2          # frames * channels * bytes per sample
+        # Prime the output with silence before feeding it anything real.
+        #
+        # ffmpeg is reading a live capture, so it delivers audio at exactly real
+        # time and the device consumes it at exactly real time. With nothing
+        # queued ahead, the pipeline runs at zero margin forever - any
+        # scheduling delay in this thread means the device wanted samples that
+        # had not arrived, and a starved output does not play late, it crackles.
+        # No buffer size alone fixes that: a bigger buffer never fills, because
+        # the producer is never ahead. The queue has to be given a head start,
+        # which is what this silence is, and it is exactly what VLC's
+        # live-caching was quietly doing before audio was split out of it.
+        cushion = int(self._rate * AUDIO_LATENCY_MS / 1000.0)
+        if cushion:
+            try:
+                self._stream.write(bytes(cushion * self._channels * 2))
+            except Exception:
+                pass
+
+        chunk = 1024 * self._channels * 2   # frames * channels * bytes/sample
+        warned = False
         while not self._stop.is_set():
             try:
                 data = self._proc.stdout.read(chunk)
                 if not data:
                     break
-                self._stream.write(data)
+                # write() reports whether the device ran dry waiting for this.
+                # write() is documented to return whether the device ran dry.
+                # Treat a report as a useful hint, never as proof of health:
+                # PortAudio did not surface it at all through the blocking API
+                # on this host, so silence here does not mean silence there.
+                if self._stream.write(data):
+                    self.underruns += 1
+                    if self.underruns == 25 and not warned:
+                        warned = True
+                        print(f"[!] Capture audio is running dry at "
+                              f"{AUDIO_LATENCY_MS}ms - raise --audio-latency.")
             except Exception:
                 break
 
@@ -2345,6 +2401,12 @@ def main():
                              "buffers the picture only because audio is split out of VLC "
                              "by default. With --no-split-audio this buffers the sound "
                              "too and 20 will crackle - raise it to 100-200 there.")
+    parser.add_argument("--audio-latency", type=int, default=AUDIO_LATENCY_MS,
+                        metavar="MS",
+                        help="How far ahead the split-audio pipe queues sound, in ms. "
+                             "Default 100. This delays only the audio, never the "
+                             "picture, so raise it if you hear crackling - that is the "
+                             "output running dry. No effect with --no-split-audio.")
     parser.add_argument("--split-audio", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Play capture audio through a separate ffmpeg pipe rather "
@@ -2391,6 +2453,7 @@ def main():
                         help="Analog trigger level counted as a ZL/ZR press (0..1). Default 0.5.")
     args = parser.parse_args()
     set_capture_latency(args.capture_latency)
+    set_audio_latency(args.audio_latency)
 
     if args.dump_config:
         write_default_config(args.dump_config)
@@ -2691,8 +2754,10 @@ def main():
                 else:
                     print("    mode: card advertised none; letting DirectShow choose")
                 if aname and split_audio:
-                    print(f"    audio: {aname} -> separate pipe, so the "
-                          f"{CAPTURE_LATENCY_MS}ms buffer is video only")
+                    print(f"    audio: {aname} -> separate pipe "
+                          f"({AUDIO_LATENCY_MS}ms behind; --audio-latency if it "
+                          f"crackles), so the {CAPTURE_LATENCY_MS}ms buffer is "
+                          f"video only")
                 elif aname:
                     print(f"    audio: {aname} -> default Windows output "
                           f"({CAPTURE_LATENCY_MS}ms buffer; raise "

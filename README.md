@@ -253,7 +253,13 @@ does not have to pay for it.
 | Flag | Effect |
 | --- | --- |
 | `--capture-latency N` | Video buffer in ms. Lower until the picture stops improving — what is left below that is the card's own pipeline, which no setting here can shorten |
+| `--audio-latency N` | How far ahead the audio pipe queues, default 100 ms. Delays only the sound, so raise it if you hear crackling |
 | `--no-split-audio` | Put audio back through VLC. Then `--capture-latency` buffers sound too, and 20 will crackle — use 100–200 |
+
+Crackling is the audio output running dry, and it is fixed with
+`--audio-latency`, never `--capture-latency`. The two are independent now: sound
+runs ~100 ms behind the picture, which is the forgiving direction — broadcast
+practice tolerates about 125 ms of audio lag against roughly 45 ms of lead.
 
 Recordings take their audio from VLC either way, so `capture.avi` keeps its
 sound; latency rises for the length of a take and drops again on stop. If
