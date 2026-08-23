@@ -256,10 +256,21 @@ does not have to pay for it.
 | `--audio-latency N` | How far ahead the audio pipe queues, default 100 ms. Delays only the sound, so raise it if you hear crackling |
 | `--no-split-audio` | Put audio back through VLC. Then `--capture-latency` buffers sound too, and 20 will crackle — use 100–200 |
 
-Crackling is the audio output running dry, and it is fixed with
-`--audio-latency`, never `--capture-latency`. The two are independent now: sound
-runs ~100 ms behind the picture, which is the forgiving direction — broadcast
-practice tolerates about 125 ms of audio lag against roughly 45 ms of lead.
+Both are also in the dropdown under **latency**, so they can be tuned by ear
+while the game is running rather than by restarting with a different flag. The
+audio row only appears when audio is on its own pipe — with `--no-split-audio`
+the video buffer *is* the audio buffer and a second setting would do nothing.
+Changing the video buffer restarts the stream, so it is refused mid-recording.
+
+Crackling is the audio output running dry, and it is fixed with the audio
+buffer, never the video one. The two are independent now: sound runs ~100 ms
+behind the picture, which is the forgiving direction — broadcast practice
+tolerates about 125 ms of audio lag against roughly 45 ms of lead.
+
+Run from a console and the client reports what it actually got — the device
+buffer it was given, the cushion primed into it, and anything ffmpeg says about
+the capture side. Capture-side and output-side dropouts sound identical and
+need opposite fixes, so it is worth reading which one you have.
 
 Recordings take their audio from VLC either way, so `capture.avi` keeps its
 sound; latency rises for the length of a take and drops again on stop. If

@@ -931,6 +931,14 @@ def set_audio_latency(ms):
     AUDIO_LATENCY_MS = max(0, int(ms))
 
 
+# What the toolbar offers for each. Both are tuning-by-ear settings - the right
+# value depends on the machine and there is no way to work it out from here - so
+# they are on the menu rather than only on the command line, where changing one
+# means quitting mid-session and remembering a flag.
+VIDEO_LATENCY_CHOICES = (0, 10, 20, 40, 60, 100, 150)
+AUDIO_LATENCY_CHOICES = (40, 60, 80, 100, 150, 200, 300)
+
+
 def ffmpeg_exe():
     """Path to an ffmpeg binary: PATH first, else the pip-installed one."""
     import shutil
@@ -1111,7 +1119,8 @@ class Toolbar:
         self.pads = []               # [(idx, name)] real controllers
         self.slots = {}              # slot -> pad index, or None for no pad
         self.slot_kb = {}            # slot -> KB_FULL | KB_AUX | KB_OFF
-        self.open_menu = None        # None | 'device' | 'mode' | 'slot0'.. | 'keys'
+        self.split_audio = False     # audio on its own pipe -> its own buffer row
+        self.open_menu = None        # None|'device'|'mode'|'vlat'|'alat'|'slot0'..|'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
         self.capture_action = None   # action awaiting a keypress, if any
@@ -1219,7 +1228,14 @@ class Toolbar:
                      ("go", f"Input :  {self.device or 'none'}", "device"),
                      ("go", f"Mode  :  {mode_label(self.mode) if self.mode else 'default'}",
                       "mode"),
-                     (None, "-- controllers --", None)]
+                     (None, "-- latency --", None),
+                     ("go", f"Video buffer :  {CAPTURE_LATENCY_MS} ms", "vlat")]
+            # Audio buffering is only a thing on its own pipe; with audio inside
+            # VLC the video buffer is the audio buffer and a second row would be
+            # offering a setting that does nothing.
+            if self.split_audio:
+                items.append(("go", f"Audio buffer :  {AUDIO_LATENCY_MS} ms", "alat"))
+            items.append((None, "-- controllers --", None))
             # Spell out what each controller is currently driven by, rather
             # than an abbreviation - this is the screen people come here to read.
             items += [("go", f"Controller {s + 1} :  {self._slot_label(s, short=False)}",
@@ -1228,6 +1244,18 @@ class Toolbar:
                       ("go", "Remap keyboard controls...", "keys")]
         elif self.open_menu == "device":
             items = [("device", d, d) for d in self.devices]
+        elif self.open_menu == "vlat":
+            items = [(None, "-- video buffer: lower is less delay --", None)]
+            items += [("vlat", f"{v} ms" + ("   (default)" if v == 20 else ""), v)
+                      for v in VIDEO_LATENCY_CHOICES]
+            items.append((None, "-- what is left below this is the card --", None))
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "alat":
+            items = [(None, "-- audio buffer: raise if sound crackles --", None)]
+            items += [("alat", f"{v} ms" + ("   (default)" if v == 100 else ""), v)
+                      for v in AUDIO_LATENCY_CHOICES]
+            items.append((None, "-- delays sound only, never the picture --", None))
+            items.append(("go", "< back", "root"))
         elif self.open_menu == "keys":
             self._draw_keymap(surface, f)
             return
@@ -1282,6 +1310,10 @@ class Toolbar:
                     sel = value == self.device
                 elif kind == "mode":
                     sel = value == self.mode
+                elif kind == "vlat":
+                    sel = value == CAPTURE_LATENCY_MS
+                elif kind == "alat":
+                    sel = value == AUDIO_LATENCY_MS
                 elif kind == "slot":
                     sel = self.slots.get(value[0]) == value[1]
                 else:
@@ -2767,6 +2799,7 @@ def main():
         if CAPTURE_LATENCY_MS < 100:
             print(f"    {CAPTURE_LATENCY_MS}ms now buffers the sound too and may "
                   f"crackle - raise --capture-latency to 100-200 if it does.")
+    toolbar.split_audio = split_audio
 
     if _window is not None and want_preview:
         vids, auds = list_dshow_devices()
@@ -2946,7 +2979,10 @@ def main():
         Both require tearing down and restarting VLC - DirectShow
         negotiates the device and mode when the stream opens, so
         they cannot be changed on a live one."""
-        nonlocal vlc_preview, vlc_aspect, refit_until
+        # One declaration for the whole handler: Python wants nonlocal before
+        # any use of the name, and both the audio-buffer and record branches
+        # rebuild capture_audio.
+        nonlocal vlc_preview, vlc_aspect, refit_until, recorder, capture_audio
         if is_fullscreen() or vlc_preview is None:
             return
         # Re-enumerate on every toolbar click, so a controller connected after
@@ -2968,7 +3004,6 @@ def main():
             return
 
         if kind == "record":
-            nonlocal recorder, capture_audio
             aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
             # VLC is what writes capture.avi, so it needs the audio device back
             # for the length of a recording or the file would be silent. The
@@ -3021,6 +3056,35 @@ def main():
                     recorder = None
                     print(f"[+] Recording saved: {where}  "
                           f"({rows} input rows)")
+            return
+
+        if kind == "alat":
+            set_audio_latency(value)
+            # The cushion is primed once at start, so it only changes by
+            # restarting the pipe. Cheap - a few hundred ms of silence - and it
+            # does not touch the video, which is the whole point of the split.
+            if capture_audio is not None:
+                dev = pick_capture(args.capture_audio, list_dshow_devices()[1])
+                capture_audio.stop()
+                capture_audio = CaptureAudio(dev) if dev else None
+                if capture_audio is not None and capture_audio.error:
+                    print(f"[!] Capture audio failed: {capture_audio.error}")
+                    capture_audio = None
+            print(f"[+] Audio buffer -> {AUDIO_LATENCY_MS}ms")
+            return
+
+        if kind == "vlat":
+            if toolbar.recording:
+                print("[-] Stop recording before changing the video buffer.")
+                return
+            set_capture_latency(value)
+            # live-caching is fixed when the media is created, so this needs the
+            # same stream restart a device or mode change needs.
+            aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+            _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device,
+                                         None if split_audio else aud,
+                                         toolbar.mode))
+            print(f"[+] Video buffer -> {CAPTURE_LATENCY_MS}ms")
             return
 
         if toolbar.recording and kind in ("device", "mode"):
