@@ -1744,6 +1744,7 @@ class CaptureAudio:
         self._rate = rate
         self._channels = channels
         self.underruns = 0
+        self.ffmpeg_errors = 0
 
         exe = ffmpeg_exe()
         if not exe:
@@ -1762,9 +1763,17 @@ class CaptureAudio:
                "-f", "s16le", "-acodec", "pcm_s16le",
                "-ar", str(rate), "-ac", str(channels), "-"]
         try:
+            # stderr is read, not discarded. ffmpeg announces a starved or
+            # overrun dshow buffer here ("real-time buffer ... too full",
+            # "Thread message queue blocking"), and those are dropouts arriving
+            # from the capture side rather than the output side - the two sound
+            # identical and need opposite fixes, so the distinction has to be
+            # visible rather than guessed at.
             self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                          stderr=subprocess.DEVNULL,
+                                          stderr=subprocess.PIPE,
                                           creationflags=_NO_WINDOW)
+            self._et = threading.Thread(target=self._drain_stderr, daemon=True)
+            self._et.start()
             # No latency= here on purpose. It looks like the knob to reach for,
             # but sounddevice already defaults to 'high', which measured 213ms
             # of buffer on this machine - asking for AUDIO_LATENCY_MS instead
@@ -1777,8 +1786,41 @@ class CaptureAudio:
             self.error = f"audio start failed ({e})"
             self.stop()
             return
+
+        # What the output actually gave us, rather than what was asked for.
+        # sounddevice's 'high' default is the whole buffer here, and it differs
+        # per device and host API - printing it is how a machine where it is
+        # far smaller than this one's 213ms becomes obvious instead of puzzling.
+        try:
+            print(f"    audio pipe: {self._stream.latency * 1000:.0f}ms device "
+                  f"buffer, {AUDIO_LATENCY_MS}ms primed ahead")
+        except Exception:
+            pass
+
         self._t = threading.Thread(target=self._run, daemon=True)
         self._t.start()
+
+    def _drain_stderr(self):
+        """Surface ffmpeg's complaints; they are the capture-side dropouts."""
+        shown = 0
+        while not self._stop.is_set():
+            try:
+                line = self._proc.stderr.readline()
+            except Exception:
+                break
+            if not line:
+                break
+            msg = line.decode("utf-8", errors="ignore").strip()
+            if not msg:
+                continue
+            self.ffmpeg_errors += 1
+            # First few only: a card that is dropping does so continuously, and
+            # scrolling the console would cost more time than it reports.
+            if shown < 5:
+                shown += 1
+                print(f"[!] capture audio (ffmpeg): {msg}")
+                if shown == 5:
+                    print("    ...further ffmpeg audio messages suppressed.")
 
     def _run(self):
         # Prime the output with silence before feeding it anything real.
