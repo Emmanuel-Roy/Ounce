@@ -2921,6 +2921,15 @@ def main():
 
 
 
+    # 500 Hz, paced against a deadline rather than by sleeping a flat 2ms.
+    # time.sleep() is a floor, not a period: measured here it returns after
+    # 2.31ms mean / 2.50ms p50 for a 2ms request, so a flat sleep ran the loop
+    # at ~400Hz and the overshoot was pure added latency. Building each packet
+    # costs 0.04ms, so sleeping to the next deadline instead absorbs that
+    # overshoot and holds the rate the master is actually polling at.
+    SEND_PERIOD = 0.002
+    next_send = time.perf_counter()
+
     try:
         while True:
             # Esc deliberately does NOT quit. It is a normal game key and it
@@ -3044,12 +3053,22 @@ def main():
             except Exception:
                 pass
 
-            # 500 Hz loop. This was 20ms (50 Hz), which by itself put up to
-            # 20ms of latency on every input - far more than the whole SPI
-            # path, which delivers a packet every 1ms. The master polls at
-            # 1kHz, so feeding it faster than 50 Hz is what actually makes
-            # the controller feel responsive.
-            time.sleep(0.002)
+            # Sleep to the next deadline. This was a flat 20ms (50 Hz), which by
+            # itself put up to 20ms of latency on every input - far more than
+            # the whole SPI path, which delivers a packet every 1ms. The master
+            # polls at 1kHz, so feeding it faster than 50 Hz is what actually
+            # makes the controller feel responsive.
+            next_send += SEND_PERIOD
+            slack = next_send - time.perf_counter()
+            if slack > 0:
+                time.sleep(slack)
+            elif slack < -SEND_PERIOD:
+                # Fallen a whole period behind - a repaint, a mode switch or the
+                # OS descheduling us. Give up the lost time rather than trying to
+                # win it back: catching up means a burst of packets at whatever
+                # rate the CPU allows, which is exactly the free-running hammer
+                # the master's own pacing guards against.
+                next_send = time.perf_counter()
 
     except KeyboardInterrupt:
         print("\n[+] Interrupted.")

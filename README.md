@@ -108,6 +108,11 @@ Prebuilt images are in `bin/` — no build needed.
 All four servants get the **same** file; each learns its player number from its
 CS pin.
 
+The servants ask the Switch to poll them every **1 ms**, not the 8 ms a real Pro
+Controller reports — that interval was over half of Ounce's total input latency.
+If a servant will not enumerate on the console, that non-standard `bInterval` in
+`SwitchProDescriptors.h` is the first thing to put back to `0x08`.
+
 ## Building
 
 ```bash
