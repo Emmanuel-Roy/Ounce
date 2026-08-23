@@ -243,20 +243,22 @@ window.
 
 **Video latency.** If you play off this window rather than off the card's HDMI
 passthrough, the picture — not the controller — is what you feel. The input path
-is about 1.7 ms end to end; `--capture-latency` alone defaults to **100 ms**.
+is about 1.7 ms end to end, so anything the capture path buffers dwarfs it.
 
-That buffer exists for the *audio* output, which crackles when starved, not for
-the video. `--split-audio` plays the sound through a separate pipe so the buffer
-applies to the picture only, and then `--capture-latency` can go far lower:
+Audio is therefore split out of VLC by default, and `--capture-latency` defaults
+to **20 ms** of *video* buffering. The buffer only ever existed for the audio
+output, which crackles when starved; with the sound on its own pipe the picture
+does not have to pay for it.
 
-```bash
-python test_bridge.py --split-audio --capture-latency 20
-```
+| Flag | Effect |
+| --- | --- |
+| `--capture-latency N` | Video buffer in ms. Lower until the picture stops improving — what is left below that is the card's own pipeline, which no setting here can shorten |
+| `--no-split-audio` | Put audio back through VLC. Then `--capture-latency` buffers sound too, and 20 will crackle — use 100–200 |
 
-Lower it until the picture stops improving — what is left below that is the
-card's own pipeline, which no setting here can shorten. Recordings still take
-their audio from VLC, so `capture.avi` keeps its sound; latency rises for the
-length of a take and drops again on stop.
+Recordings take their audio from VLC either way, so `capture.avi` keeps its
+sound; latency rises for the length of a take and drops again on stop. If
+ffmpeg or `sounddevice` is missing the client says so and keeps audio in VLC
+rather than playing none.
 
 ## Recording
 
