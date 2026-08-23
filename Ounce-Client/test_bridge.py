@@ -2921,13 +2921,18 @@ def main():
 
 
 
-    # 500 Hz, paced against a deadline rather than by sleeping a flat 2ms.
-    # time.sleep() is a floor, not a period: measured here it returns after
-    # 2.31ms mean / 2.50ms p50 for a 2ms request, so a flat sleep ran the loop
-    # at ~400Hz and the overshoot was pure added latency. Building each packet
-    # costs 0.04ms, so sleeping to the next deadline instead absorbs that
-    # overshoot and holds the rate the master is actually polling at.
-    SEND_PERIOD = 0.002
+    # 1 kHz, paced against a deadline rather than by sleeping a flat period.
+    # time.sleep() is a floor, not a period: measured here a 2ms request returns
+    # after 2.31ms mean / 2.50ms p50, so a flat sleep ran the loop at ~426Hz and
+    # the overshoot was pure added latency. Deadline pacing measures 999.9Hz at
+    # this period, p99 1.40ms.
+    #
+    # 1ms rather than 2ms because that is the master's own frame period: sending
+    # faster than the master polls only ages packets it will overwrite, sending
+    # slower means it re-sends a stale one. Four slots at 1kHz is 36kB/s against
+    # the 64kB/s the master can drain (64 bytes per 1ms frame), and building all
+    # four packets costs 0.04ms of the 1ms.
+    SEND_PERIOD = 0.001
     next_send = time.perf_counter()
 
     try:
