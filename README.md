@@ -241,6 +241,23 @@ A mode must be requested explicitly or DirectShow hands out 640×480. The card's
 HDMI passthrough never reaches the PC, so only the capture path can feed the
 window.
 
+**Video latency.** If you play off this window rather than off the card's HDMI
+passthrough, the picture — not the controller — is what you feel. The input path
+is about 1.7 ms end to end; `--capture-latency` alone defaults to **100 ms**.
+
+That buffer exists for the *audio* output, which crackles when starved, not for
+the video. `--split-audio` plays the sound through a separate pipe so the buffer
+applies to the picture only, and then `--capture-latency` can go far lower:
+
+```bash
+python test_bridge.py --split-audio --capture-latency 20
+```
+
+Lower it until the picture stops improving — what is left below that is the
+card's own pipeline, which no setting here can shorten. Recordings still take
+their audio from VLC, so `capture.avi` keeps its sound; latency rises for the
+length of a take and drops again on stop.
+
 ## Recording
 
 **Rec** on the toolbar starts and stops a recording. Each one is a folder in

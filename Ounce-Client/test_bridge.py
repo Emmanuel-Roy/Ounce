@@ -2324,7 +2324,15 @@ def main():
                         help="How much the VLC path may buffer, in ms. Default 100. "
                              "Lower is less delay but starves the audio output: "
                              "crackling and dropouts mean this is too low. Raise it "
-                             "(100-200) if the sound breaks up.")
+                             "(100-200) if the sound breaks up, or use --split-audio "
+                             "and then lower this freely.")
+    parser.add_argument("--split-audio", action="store_true",
+                        help="Play capture audio through a separate ffmpeg pipe instead "
+                             "of through VLC, so --capture-latency buffers only the "
+                             "video. The buffer exists for the audio output's sake, so "
+                             "taking audio out of VLC is what lets the picture run at a "
+                             "low latency without crackling. Recordings still get their "
+                             "audio from VLC.")
     parser.add_argument("--list-modes", action="store_true",
                         help="List the capture card's supported modes and exit.")
     parser.add_argument("--capture-input-size", default=None, metavar="WxH",
@@ -2649,11 +2657,16 @@ def main():
                           f"   (--list-modes for alternatives)")
                 else:
                     print("    mode: card advertised none; letting DirectShow choose")
-                if aname:
+                if aname and args.split_audio:
+                    print(f"    audio: {aname} -> separate pipe, so the "
+                          f"{CAPTURE_LATENCY_MS}ms buffer is video only")
+                elif aname:
                     print(f"    audio: {aname} -> default Windows output "
                           f"({CAPTURE_LATENCY_MS}ms buffer; raise "
-                          f"--capture-latency if it crackles)")
-                vlc_preview = VlcPreview(hwnd, vname, aname, mode)
+                          f"--capture-latency if it crackles, or --split-audio "
+                          f"to take it out of VLC)")
+                vlc_preview = VlcPreview(hwnd, vname,
+                                         None if args.split_audio else aname, mode)
                 if vlc_preview.error:
                     print(f"[!] VLC backend failed: {vlc_preview.error}")
                     print("    Falling back to the ffmpeg pipe (lower resolution).")
@@ -2675,7 +2688,11 @@ def main():
                         print("    F11 = borderless fullscreen, Esc = leave it")
                         print("    toolbar: pick input device and capture mode")
                     vname = None      # handled; skip the ffmpeg path below
-                    aname = None
+                    # With --split-audio, aname is deliberately left set so the
+                    # CaptureAudio block below picks it up - VLC was handed no
+                    # audio device, so nothing else would play the sound.
+                    if not args.split_audio:
+                        aname = None
 
         if vname:
             try:
@@ -2693,7 +2710,8 @@ def main():
             print(f"[-] No capture device matching '{args.capture}' "
                   f"(try --list-capture)")
 
-        # Only needed on the ffmpeg path; VLC plays its own audio.
+        # Needed on the ffmpeg path, and on the VLC path under --split-audio,
+        # where VLC was given no audio device on purpose.
         if aname:
             print(f"[+] Capture audio: {aname} -> default Windows output")
             capture_audio = CaptureAudio(aname)
@@ -2810,8 +2828,16 @@ def main():
             return
 
         if kind == "record":
-            nonlocal recorder
+            nonlocal recorder, capture_audio
             aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
+            # VLC is what writes capture.avi, so it needs the audio device back
+            # for the length of a recording or the file would be silent. The
+            # separate pipe stops for that time, otherwise the sound would play
+            # twice. Latency rises while recording and drops again on stop.
+            if args.split_audio and aud:
+                if value and capture_audio is not None:
+                    capture_audio.stop()
+                    capture_audio = None
             if value:                                  # start
                 # Frames are written in the codec they arrive in, so a raw
                 # capture mode records raw: 1080p60 NV12 is ~180MB/s, which
@@ -2839,8 +2865,15 @@ def main():
                 # Tear the recording pipeline down first: the file is only
                 # finalised when VLC closes it, so the log must not be cut
                 # short before the video it is timed against.
-                _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device, aud,
-                                             toolbar.mode))
+                _swap_vlc(lambda: VlcPreview(
+                    _video_child, toolbar.device,
+                    None if args.split_audio else aud, toolbar.mode))
+                if args.split_audio and aud:
+                    # Hand the sound back to the separate pipe.
+                    capture_audio = CaptureAudio(aud)
+                    if capture_audio.error:
+                        print(f"[!] Capture audio failed: {capture_audio.error}")
+                        capture_audio = None
                 if recorder is not None:
                     rows, length = recorder.rows, recorder.elapsed()
                     recorder.close()
@@ -2896,7 +2929,11 @@ def main():
         print(f"[+] Switching {kind} -> "
               f"{value if kind == 'device' else mode_label(value)}")
         aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-        _swap_vlc(lambda: VlcPreview(_video_child, new_dev, aud, new_mode))
+        # Under --split-audio the separate pipe is already playing this card's
+        # sound and keeps running across a device or mode change, so VLC must
+        # not also open it.
+        _swap_vlc(lambda: VlcPreview(_video_child, new_dev,
+                                     None if args.split_audio else aud, new_mode))
         toolbar.set_sources(toolbar.devices,
                             new_modes if new_modes is not None
                             else (toolbar.modes_comp + toolbar.modes_raw),
