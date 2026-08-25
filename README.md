@@ -1,5 +1,3 @@
-<img src="Ounce-Client/Graphics/banner.jpg" alt="Ounce">
-
 # Ounce
 
 Play your Nintendo Switch from anywhere. Four Picos each appear to the Switch as
