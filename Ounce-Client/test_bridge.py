@@ -939,6 +939,125 @@ VIDEO_LATENCY_CHOICES = (0, 10, 20, 40, 60, 100, 150)
 AUDIO_LATENCY_CHOICES = (40, 60, 80, 100, 150, 200, 300)
 
 
+# --------------------------------------------------------------------------
+# Internal upscaler.
+#
+# The card sends 1440p, but the game renders well below that and the console
+# scales it up, so the stairsteps are baked into the signal before it ever
+# arrives. Nothing downstream can put back detail that was never drawn.
+#
+# What does help is the thing you notice by accident: shrinking the window
+# makes the picture look good. A downscale averages each stairstep away, and
+# that is supersampling - the strongest antialiasing there is. This reproduces
+# it at any window size. Resample down to UPSCALE_RENDER_H, then back up to the
+# window, so the picture keeps the shrunken-window look while still filling the
+# screen. Lower render height is stronger AA and a softer image; the right
+# value is the one that looks right on the game being played, which is why it
+# is on the toolbar rather than only in a flag.
+#
+# Both resamples run in linear light. Averaging gamma-encoded pixels averages
+# the wrong numbers and darkens every edge, which is exactly what makes a naive
+# downscale look muddy rather than smooth. The card sends untagged frames, so
+# the chain must declare what they are before it can linearise them - that is
+# what setparams is for, and leaving it out does not degrade quietly, it fails
+# outright with "no path between colorspaces".
+#
+# ffmpeg backend only. The VLC backend hands frames straight to the GPU and
+# never lets Python, or a filter chain, near them.
+UPSCALE = "off"             # off | fast | aa
+UPSCALE_RENDER_H = 720      # the shrink; 0 disables it
+UPSCALE_SHARPEN = 0.4       # CAS strength afterwards; 0.0 = none
+
+UPSCALE_CHOICES = ("off", "fast", "aa")
+# 0 means "no shrink": resample straight to the window, in linear light.
+RENDER_H_CHOICES = (480, 540, 720, 900, 1080, 0)
+SHARPEN_CHOICES = (0.0, 0.2, 0.4, 0.6, 0.8)
+
+
+def set_upscale(mode):
+    global UPSCALE
+    UPSCALE = mode if mode in UPSCALE_CHOICES else "off"
+
+
+def set_render_height(h):
+    global UPSCALE_RENDER_H
+    UPSCALE_RENDER_H = max(0, int(h))
+
+
+def set_sharpen(s):
+    global UPSCALE_SHARPEN
+    UPSCALE_SHARPEN = max(0.0, min(1.0, float(s)))
+
+
+def _fit(sw, sh, mw, mh):
+    """Largest box with sw:sh proportions fitting inside mw x mh.
+
+    Even sizes only - odd dimensions break chroma-subsampled intermediate
+    formats, and the failure shows up as a filter graph that will not build."""
+    s = min(mw / sw, mh / sh)
+    return max(2, int(sw * s) // 2 * 2), max(2, int(sh * s) // 2 * 2)
+
+
+def colour_tag(src_size):
+    """Say which YUV matrix the card's untagged frames use.
+
+    Nothing in a raw DirectShow stream states this, so every consumer guesses,
+    and swscale guesses bt601 whatever the resolution. On a 1440p feed that is
+    simply wrong - HD is bt709 - and it is measurable: the two matrices differ
+    by about 4 code values on a colour bar, enough that turning the upscaler on
+    would visibly shift the picture if only one path were tagged. So the tag
+    goes on every chain, and it follows the standard rule rather than being
+    pinned: bt709 at HD and above, bt601 below it, which is right for the
+    640x480 mode DirectShow falls back to."""
+    if not src_size or not src_size[1]:
+        return None            # nothing to base it on; leave the guess alone
+    space = "bt709" if src_size[1] >= 720 else "smpte170m"
+    return (f"setparams=color_primaries={space}:color_trc={space}"
+            f":colorspace={space}:range=tv")
+
+
+def upscale_chain(out_w, out_h, src_size=None):
+    """The -vf chain for the preview pipe.
+
+    Always emits exactly out_w x out_h, padded if the source is a different
+    shape: the reader reads fixed-size frames off the pipe and reshapes them,
+    so a chain that emitted anything else would desynchronise the stream."""
+    pad = f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2"
+    fit = f"force_original_aspect_ratio=decrease"
+    tag = colour_tag(src_size)
+    head = f"{tag}," if tag else ""
+    if UPSCALE == "off":
+        return f"{head}scale={out_w}:{out_h}:{fit},{pad}"
+    if UPSCALE == "fast" or not src_size or not src_size[1]:
+        # Either asked for cheap, or there is no source geometry to compute a
+        # shrink from. A single good-kernel resample straight to the window is
+        # still strictly better than the old fixed 960x540 followed by a
+        # pygame stretch back up - that was two lossy resamples, neither of
+        # them at the size actually being displayed.
+        return f"{head}scale={out_w}:{out_h}:{fit}:flags=lanczos+accurate_rnd,{pad}"
+
+    sw, sh = src_size
+    fw, fh = _fit(sw, sh, out_w, out_h)
+    steps = [tag, "zscale=t=linear", "format=gbrpf32le"]
+    # Only shrink if it really is a shrink. Asking for a render height above
+    # what the window shows would upscale and then downscale, which costs
+    # sharpness to gain nothing.
+    if UPSCALE_RENDER_H and UPSCALE_RENDER_H < fh:
+        steps.append("zscale=%d:%d:f=spline36" % _fit(sw, sh, out_w, UPSCALE_RENDER_H))
+    # Back to the display transfer while still in float, and only then down to
+    # 8 bits. The other order quantises linear light, which has nowhere near
+    # enough codes for the shadows: it cost 13 code values on a dark patch
+    # here, measured against the unfiltered path, and showed up as the AA modes
+    # looking murkier rather than smoother.
+    steps += [f"zscale={fw}:{fh}:f=spline36",
+              "zscale=t=" + ("bt709" if sh >= 720 else "smpte170m"),
+              "format=gbrp"]
+    if UPSCALE_SHARPEN > 0:
+        steps.append(f"cas=strength={UPSCALE_SHARPEN:.2f}")
+    steps.append(pad)
+    return ",".join(steps)
+
+
 def ffmpeg_exe():
     """Path to an ffmpeg binary: PATH first, else the pip-installed one."""
     import shutil
@@ -1120,6 +1239,11 @@ class Toolbar:
         self.slots = {}              # slot -> pad index, or None for no pad
         self.slot_kb = {}            # slot -> KB_FULL | KB_AUX | KB_OFF
         self.split_audio = False     # audio on its own pipe -> its own buffer row
+        # The upscaler is a filter chain in the preview pipe, so it exists only
+        # on the ffmpeg backend. On the VLC backend frames go straight to the
+        # GPU and never pass through anything we could filter, so the rows are
+        # hidden rather than shown doing nothing.
+        self.software_preview = False
         self.open_menu = None        # None|'device'|'mode'|'vlat'|'alat'|'slot0'..|'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
@@ -1228,13 +1352,26 @@ class Toolbar:
                      ("go", f"Input :  {self.device or 'none'}", "device"),
                      ("go", f"Mode  :  {mode_label(self.mode) if self.mode else 'default'}",
                       "mode"),
-                     (None, "-- latency --", None),
-                     ("go", f"Video buffer :  {CAPTURE_LATENCY_MS} ms", "vlat")]
+                     (None, "-- latency --", None)]
+            # live-caching is a VLC knob; the ffmpeg pipe does not have one, so
+            # the row would be inert there.
+            if not self.software_preview:
+                items.append(("go", f"Video buffer :  {CAPTURE_LATENCY_MS} ms",
+                              "vlat"))
             # Audio buffering is only a thing on its own pipe; with audio inside
             # VLC the video buffer is the audio buffer and a second row would be
             # offering a setting that does nothing.
             if self.split_audio:
                 items.append(("go", f"Audio buffer :  {AUDIO_LATENCY_MS} ms", "alat"))
+            if self.software_preview:
+                items.append((None, "-- picture --", None))
+                items.append(("go", f"Upscaler :  {UPSCALE}", "up"))
+                # Only meaningful once there is a resample to tune.
+                if UPSCALE != "off":
+                    items.append(("go", "Render   :  %s" %
+                                  (f"{UPSCALE_RENDER_H}p" if UPSCALE_RENDER_H
+                                   else "native"), "rh"))
+                    items.append(("go", f"Sharpen  :  {UPSCALE_SHARPEN:.1f}", "sharp"))
             items.append((None, "-- controllers --", None))
             # Spell out what each controller is currently driven by, rather
             # than an abbreviation - this is the screen people come here to read.
@@ -1255,6 +1392,26 @@ class Toolbar:
             items += [("alat", f"{v} ms" + ("   (default)" if v == 100 else ""), v)
                       for v in AUDIO_LATENCY_CHOICES]
             items.append((None, "-- delays sound only, never the picture --", None))
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "up":
+            items = [(None, "-- upscaler --", None),
+                     ("up", "off      no filtering, cheapest", "off"),
+                     ("up", "fast     one good resample to the window", "fast"),
+                     ("up", "aa       shrink and rebuild (strongest AA)", "aa")]
+            items.append((None, "-- aa is the shrunken-window look, full size --", None))
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "rh":
+            items = [(None, "-- render height: lower = smoother, softer --", None)]
+            items += [("rh", ("native (no shrink)" if v == 0 else f"{v}p")
+                       + ("   (default)" if v == 720 else ""), v)
+                      for v in RENDER_H_CHOICES]
+            items.append((None, "-- the game renders below this anyway --", None))
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "sharp":
+            items = [(None, "-- sharpen: puts back what the resample costs --", None)]
+            items += [("sharp", ("off" if v == 0 else f"{v:.1f}")
+                       + ("   (default)" if v == 0.4 else ""), v)
+                      for v in SHARPEN_CHOICES]
             items.append(("go", "< back", "root"))
         elif self.open_menu == "keys":
             self._draw_keymap(surface, f)
@@ -1314,6 +1471,12 @@ class Toolbar:
                     sel = value == CAPTURE_LATENCY_MS
                 elif kind == "alat":
                     sel = value == AUDIO_LATENCY_MS
+                elif kind == "up":
+                    sel = value == UPSCALE
+                elif kind == "rh":
+                    sel = value == UPSCALE_RENDER_H
+                elif kind == "sharp":
+                    sel = abs(value - UPSCALE_SHARPEN) < 0.001
                 elif kind == "slot":
                     sel = self.slots.get(value[0]) == value[1]
                 else:
@@ -1659,13 +1822,24 @@ class CapturePreview:
             cmd += ["-video_size", in_size]
         if in_fps:
             cmd += ["-framerate", str(in_fps)]
-        # decrease+pad rather than a plain scale: a bare scale=w:h squashes any
-        # source that is not the pipe's shape (a 4:3 or ultrawide input into a
-        # 16:9 pipe). The padding keeps every frame exactly w*h*3 bytes, which
-        # the reader below depends on to reshape the buffer.
+        # Every chain decrease-fits and pads rather than plain scaling: a bare
+        # scale=w:h squashes any source that is not the pipe's shape (a 4:3 or
+        # ultrawide input into a 16:9 pipe). The padding keeps every frame
+        # exactly w*h*3 bytes, which the reader below depends on to reshape the
+        # buffer - a chain emitting any other size would not raise, it would
+        # slide the picture sideways forever.
+        #
+        # The source geometry is passed through so the upscaler can work out
+        # its own intermediate sizes; without it the chain falls back to a
+        # single resample, since there is nothing to compute a shrink from.
+        src = None
+        if in_size:
+            try:
+                src = tuple(int(x) for x in str(in_size).lower().split("x"))
+            except Exception:
+                src = None
         cmd += ["-i", f"video={device_name}",
-                "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                       f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
+                "-vf", upscale_chain(w, h, src),
                 "-r", str(fps),
                 "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
         try:
@@ -2457,14 +2631,38 @@ def main():
                         help="How the capture card is drawn. 'vlc' renders on the GPU "
                              "straight into the window (handles 4K60, plays its own "
                              "audio). 'ffmpeg' pipes raw frames through Python, which "
-                             "caps out near 1080p. Default vlc, falling back to ffmpeg.")
-    parser.add_argument("--capture-size", default=f"{CAPTURE_W}x{CAPTURE_H}",
-                        metavar="WxH",
-                        help="Preview size. Raw frames cross a pipe, so this sets the "
-                             "bandwidth: 960x540 is ~1.5MB/frame. Default 960x540.")
+                             "measures ~94fps at 1440p60 and ~175 at 1080p60 with "
+                             "the upscaler on, so it is not the ceiling this once "
+                             "said it was - but it adds a pipe hop VLC does not "
+                             "have. Default vlc, falling back to ffmpeg. The "
+                             "upscaler only exists here: VLC draws on the GPU and "
+                             "never lets a filter chain near the frames.")
+    parser.add_argument("--capture-size", default="auto", metavar="WxH",
+                        help="Preview pipe size. Raw frames cross a pipe, so this sets "
+                             "the bandwidth: 960x540 is ~1.5MB/frame. Default auto - "
+                             "960x540 normally, or the window size when --upscale is on, "
+                             "so the picture is resampled once, at the size it is shown "
+                             "at, instead of twice.")
     parser.add_argument("--capture-fps", type=int, default=30, metavar="N",
                         help="Preview frame rate cap. Default 30; 60 doubles pipe "
-                             "bandwidth for little visible gain.")
+                             "bandwidth, and is worth it with --upscale.")
+    parser.add_argument("--upscale", choices=UPSCALE_CHOICES, default="off",
+                        help="Internal upscaler, ffmpeg backend only. 'aa' resamples "
+                             "down to --render-height and back up to the window, both "
+                             "passes in linear light: that is supersampling, and it is "
+                             "what makes a shrunken window look clean, applied at full "
+                             "size. 'fast' is one good-kernel resample with no shrink. "
+                             "Default off.")
+    parser.add_argument("--render-height", type=int, default=UPSCALE_RENDER_H,
+                        metavar="H",
+                        help="How far --upscale=aa shrinks before scaling back up. "
+                             "Lower is stronger antialiasing and a softer picture. "
+                             f"0 disables the shrink. Default {UPSCALE_RENDER_H}.")
+    parser.add_argument("--sharpen", type=float, default=UPSCALE_SHARPEN,
+                        metavar="S",
+                        help="Contrast-adaptive sharpening after the resample, 0.0-1.0, "
+                             f"to put back the bite it costs. 0 = none. Default "
+                             f"{UPSCALE_SHARPEN}.")
     parser.add_argument("--capture-mode", default=None, metavar="WxH[@FPS]",
                         help="Capture mode to request, e.g. 3840x2160@30 or 1920x1080@120. "
                              "Default: the highest pixels-per-second the card offers. "
@@ -2528,6 +2726,9 @@ def main():
     args = parser.parse_args()
     set_capture_latency(args.capture_latency)
     set_audio_latency(args.audio_latency)
+    set_upscale(args.upscale)
+    set_render_height(args.render_height)
+    set_sharpen(args.sharpen)
 
     if args.dump_config:
         write_default_config(args.dump_config)
@@ -2781,6 +2982,7 @@ def main():
     # Steam case - the window has to be there for Steam Input anyway, so we may
     # as well put the game on it.
     capture = capture_audio = vlc_preview = None
+    capture_args = None    # how to rebuild the ffmpeg pipe, once there is one
     vlc_aspect = None
     toolbar = Toolbar()
     # Note this can only ever be the CAPTURE stream. The card's HDMI
@@ -2868,17 +3070,35 @@ def main():
                         aname = None
 
         if vname:
-            try:
-                pw, ph = (int(x) for x in args.capture_size.lower().split("x"))
-            except Exception:
-                print(f"[-] Bad --capture-size '{args.capture_size}', using default")
-                pw, ph = CAPTURE_W, CAPTURE_H
-            print(f"[+] Capture video: {vname} -> {pw}x{ph} @{args.capture_fps}fps")
-            capture = CapturePreview(vname, pw, ph, args.capture_fps,
-                                     args.capture_input_size, args.capture_input_fps)
+            if args.capture_size == "auto":
+                # With the upscaler on, the pipe carries the window size so the
+                # picture is resampled once, by ffmpeg, at the size it is
+                # actually displayed at. The old fixed 960x540 meant a shrink
+                # in ffmpeg and a stretch back in pygame - two lossy resamples,
+                # neither at the display size, which is most of why this path
+                # looked soft.
+                pw, ph = ((WINDOW_W, WINDOW_H) if UPSCALE != "off"
+                          else (CAPTURE_W, CAPTURE_H))
+            else:
+                try:
+                    pw, ph = (int(x) for x in args.capture_size.lower().split("x"))
+                except Exception:
+                    print(f"[-] Bad --capture-size '{args.capture_size}', using default")
+                    pw, ph = CAPTURE_W, CAPTURE_H
+            print(f"[+] Capture video: {vname} -> {pw}x{ph} @{args.capture_fps}fps"
+                  + (f"  (upscale {UPSCALE}, render {UPSCALE_RENDER_H or 'native'}, "
+                     f"sharpen {UPSCALE_SHARPEN})" if UPSCALE != "off" else ""))
+            # Kept so a toolbar change can rebuild the pipe with exactly the
+            # same inputs. The filter graph is fixed when ffmpeg starts, so
+            # every upscaler setting is applied by restarting it.
+            capture_args = (vname, pw, ph, args.capture_fps,
+                            args.capture_input_size, args.capture_input_fps)
+            capture = CapturePreview(*capture_args)
             if capture.error:
                 print(f"[!] Capture video failed: {capture.error}")
                 capture = None
+            else:
+                toolbar.software_preview = True
         elif args.capture:
             print(f"[-] No capture device matching '{args.capture}' "
                   f"(try --list-capture)")
@@ -2983,7 +3203,14 @@ def main():
         # any use of the name, and both the audio-buffer and record branches
         # rebuild capture_audio.
         nonlocal vlc_preview, vlc_aspect, refit_until, recorder, capture_audio
-        if is_fullscreen() or vlc_preview is None:
+        nonlocal capture, capture_args
+        # Fullscreen hides the toolbar, so a click there is never aimed at it.
+        # This used to bail on the ffmpeg backend too (vlc_preview is None),
+        # which made the whole menu inert exactly where the upscaler lives; the
+        # VLC-only handlers below check for their player instead.
+        if is_fullscreen():
+            return
+        if vlc_preview is None and not toolbar.software_preview:
             return
         # Re-enumerate on every toolbar click, so a controller connected after
         # the client started still shows up. SDL does notice the device (the
@@ -3004,6 +3231,11 @@ def main():
             return
 
         if kind == "record":
+            if vlc_preview is None:
+                # VLC's sout is what writes the file; the ffmpeg preview pipe
+                # has no recorder behind it.
+                print("[-] Recording needs the VLC backend.")
+                return
             aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
             # VLC is what writes capture.avi, so it needs the audio device back
             # for the length of a recording or the file would be silent. The
@@ -3073,7 +3305,40 @@ def main():
             print(f"[+] Audio buffer -> {AUDIO_LATENCY_MS}ms")
             return
 
+        if kind in ("up", "rh", "sharp"):
+            # ffmpeg builds its filter graph once, when it starts, so every one
+            # of these is applied by restarting the pipe rather than by poking
+            # a live process. That costs a brief black frame and nothing else -
+            # the input loop runs on its own thread and never waits on capture.
+            if kind == "up":
+                set_upscale(value)
+            elif kind == "rh":
+                set_render_height(value)
+            else:
+                set_sharpen(value)
+            if capture is not None and capture_args:
+                dev, _pw, _ph, cfps, isize, ifps = capture_args
+                # The pipe carries the window size while the upscaler is on, so
+                # ffmpeg resamples once at the size actually displayed; off, it
+                # goes back to the cheap fixed size.
+                if UPSCALE != "off":
+                    _pw, _ph = WINDOW_W, WINDOW_H
+                capture.stop()
+                capture = CapturePreview(dev, _pw, _ph, cfps, isize, ifps)
+                if capture.error:
+                    print(f"[!] Capture video failed: {capture.error}")
+                    capture = None
+                    toolbar.software_preview = False
+            print(f"[+] Upscaler -> {UPSCALE}"
+                  + (f", render {UPSCALE_RENDER_H or 'native'}, "
+                     f"sharpen {UPSCALE_SHARPEN:.1f}" if UPSCALE != "off" else ""))
+            return
+
         if kind == "vlat":
+            if vlc_preview is None:
+                print("[-] The video buffer is a VLC setting; this is the "
+                      "ffmpeg backend.")
+                return
             if toolbar.recording:
                 print("[-] Stop recording before changing the video buffer.")
                 return
@@ -3132,6 +3397,27 @@ def main():
 
         print(f"[+] Switching {kind} -> "
               f"{value if kind == 'device' else mode_label(value)}")
+        if vlc_preview is None:
+            # ffmpeg backend: the same change, applied by restarting the pipe.
+            # DirectShow negotiates device and mode when the stream opens on
+            # either backend, so neither can be changed on a live one.
+            if capture is not None and capture_args:
+                _, _pw, _ph, cfps, _isize, ifps = capture_args
+                if UPSCALE != "off":
+                    _pw, _ph = WINDOW_W, WINDOW_H
+                isize = (f"{new_mode[0]}x{new_mode[1]}" if new_mode else None)
+                capture.stop()
+                capture = CapturePreview(new_dev, _pw, _ph, cfps, isize, ifps)
+                capture_args = (new_dev, _pw, _ph, cfps, isize, ifps)
+                if capture.error:
+                    print(f"[!] Capture video failed: {capture.error}")
+                    capture = None
+                    toolbar.software_preview = False
+            toolbar.set_sources(toolbar.devices,
+                                new_modes if new_modes is not None
+                                else (toolbar.modes_comp + toolbar.modes_raw),
+                                new_dev, new_mode)
+            return
         aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
         # Under --split-audio the separate pipe is already playing this card's
         # sound and keeps running across a device or mode change, so VLC must

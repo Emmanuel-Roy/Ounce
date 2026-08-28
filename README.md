@@ -275,6 +275,46 @@ sound; latency rises for the length of a take and drops again on stop. If
 ffmpeg or `sounddevice` is missing the client says so and keeps audio in VLC
 rather than playing none.
 
+## Upscaler
+
+The card sends 1440p, but a game rendering below that and letting the console
+scale up puts the stairsteps into the signal *before* the card sees them. No
+filter puts back detail that was never drawn.
+
+What does work is the thing you notice by accident: **shrinking the window makes
+the picture look good.** A downscale averages each stairstep away — that is
+supersampling, and it is the strongest antialiasing there is. The upscaler
+reproduces it at any window size: resample down to a render height, then back up
+to the window, both passes in linear light.
+
+| Flag | Effect |
+| --- | --- |
+| `--upscale off\|fast\|aa` | `aa` is the shrink-and-rebuild described above. `fast` is one good-kernel resample with no shrink. Default `off` |
+| `--render-height H` | How far `aa` shrinks first. Lower is stronger antialiasing and a softer picture; `0` skips the shrink. Default 720 |
+| `--sharpen S` | Contrast-adaptive sharpening afterwards, 0.0–1.0, to put back the bite the resample costs. Default 0.4 |
+
+All three are in the dropdown under **picture**, so you can tune by eye on the
+game you are actually playing. The rows only appear on the ffmpeg backend —
+**this needs `--video-backend ffmpeg`.** The VLC backend hands frames straight
+to the GPU and never lets a filter chain near them, which is exactly why it is
+fast; there is nowhere in it to put an upscaler.
+
+Measured here at 1440p60 in, on synthetic input: the `aa` chain sustains ~94 fps
+to a 1440p window and ~175 fps to 1080p, against the 60 needed. The filters are
+not the constraint. Latency is untested on hardware — the ffmpeg path adds a
+pipe hop the VLC path does not have, so check it feels right before committing
+to it for play.
+
+Two things this also fixed on the ffmpeg path, which were costing picture
+quality whether or not the upscaler is on:
+
+- It scaled to a fixed 960x540 and then had pygame stretch that back up to the
+  window — two lossy resamples, neither at the size being displayed. The pipe
+  now carries the window size, so the picture is resampled once.
+- Raw DirectShow frames carry no colour tag, so swscale assumed bt601 at every
+  resolution. On an HD feed that is the wrong matrix, worth about 4 code values.
+  Every chain now tags bt709 at HD and bt601 below it.
+
 ## Recording
 
 **Rec** on the toolbar starts and stops a recording. Each one is a folder in
