@@ -275,6 +275,50 @@ sound; latency rises for the length of a take and drops again on stop. If
 ffmpeg or `sounddevice` is missing the client says so and keeps audio in VLC
 rather than playing none.
 
+## Shaders (mpv backend)
+
+`--video-backend mpv` draws the card on the GPU straight into the window, the
+same as VLC — but mpv has a **programmable shader stage**, and VLC has none.
+That is the only place in this client where a GLSL pass can run between decode
+and display, which makes it the only way to attack aliasing that was baked into
+the signal before the card ever saw it.
+
+This matters when the game's internal render resolution is below what the
+console outputs. Anime4K's `Restore_CNN` shaders were built for exactly that —
+material rendered small and scaled up — and unlike an upscaler they do useful
+work even at 1:1, so they apply on a 1440p feed shown on a 1440p display.
+
+```bash
+OunceClient.exe --video-backend mpv --shader Restore_CNN_M
+OunceClient.exe --list-shaders          # what's in your mpv shaders folder
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--video-backend mpv` | GPU rendering with a shader stage |
+| `--shader NAME\|PATH` | A `.glsl` by full path, or by name — matched loosely, so `restore_cnn_m` finds `Anime4K_Restore_CNN_M` |
+| `--scaler NAME` | mpv's kernel, default `ewa_lanczossharp`. Only acts when the window is a different size from the source |
+| `--mpv-path PATH` | Where `mpv.exe` is, if not on PATH |
+
+Shader and scaler are on the toolbar under **picture** and apply **live** — mpv
+swaps them on a running stream, so unlike every other setting here nothing
+restarts and nothing is refused mid-recording.
+
+**mpv is not bundled.** A static `mpv.exe` is ~117 MB, which has no business in
+a git repository — GitHub refuses files that size. Install mpv and put it on
+PATH, exactly as VLC is already a separate install. Shaders are read from
+`%APPDATA%\mpv\shaders`; none are shipped, since Anime4K has its own licence and
+anyone using mpv already curates that folder.
+
+Your own `mpv.conf` is deliberately **not** inherited. A config tuned for
+watching video is the wrong one for playing a game through — `interpolation` and
+`video-sync=display-resample` each add frames of latency. Shaders still work,
+because they are passed by full path.
+
+Recording on this backend uses mpv's `stream-record` into `capture.mkv`, toggled
+live. That is strictly better than the VLC path, which has to restart the stream
+to start or stop a take.
+
 ## Upscaler
 
 The card sends 1440p, but a game rendering below that and letting the console

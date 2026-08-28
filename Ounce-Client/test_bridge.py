@@ -1244,6 +1244,11 @@ class Toolbar:
         # GPU and never pass through anything we could filter, so the rows are
         # hidden rather than shown doing nothing.
         self.software_preview = False
+        # Shaders are an mpv thing: VLC has no programmable stage at all, and
+        # the ffmpeg path filters on the CPU instead. Rows gate on this.
+        self.mpv_preview = False
+        self.shader = None            # currently loaded shader path, or None
+        self.scaler = "ewa_lanczossharp"
         self.open_menu = None        # None|'device'|'mode'|'vlat'|'alat'|'slot0'..|'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
@@ -1353,9 +1358,9 @@ class Toolbar:
                      ("go", f"Mode  :  {mode_label(self.mode) if self.mode else 'default'}",
                       "mode"),
                      (None, "-- latency --", None)]
-            # live-caching is a VLC knob; the ffmpeg pipe does not have one, so
-            # the row would be inert there.
-            if not self.software_preview:
+            # live-caching is a VLC knob. Neither the ffmpeg pipe nor mpv has
+            # one, so the row would be inert on both.
+            if not self.software_preview and not self.mpv_preview:
                 items.append(("go", f"Video buffer :  {CAPTURE_LATENCY_MS} ms",
                               "vlat"))
             # Audio buffering is only a thing on its own pipe; with audio inside
@@ -1363,6 +1368,12 @@ class Toolbar:
             # offering a setting that does nothing.
             if self.split_audio:
                 items.append(("go", f"Audio buffer :  {AUDIO_LATENCY_MS} ms", "alat"))
+            if self.mpv_preview:
+                items.append((None, "-- picture --", None))
+                items.append(("go", "Shader :  %s" %
+                              (os.path.basename(self.shader)[:-5] if self.shader
+                               else "none"), "shader"))
+                items.append(("go", f"Scaler :  {self.scaler}", "scaler"))
             if self.software_preview:
                 items.append((None, "-- picture --", None))
                 items.append(("go", f"Upscaler :  {UPSCALE}", "up"))
@@ -1392,6 +1403,23 @@ class Toolbar:
             items += [("alat", f"{v} ms" + ("   (default)" if v == 100 else ""), v)
                       for v in AUDIO_LATENCY_CHOICES]
             items.append((None, "-- delays sound only, never the picture --", None))
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "shader":
+            items = [(None, "-- shader: runs on the GPU between decode --", None),
+                     ("shader", "none", None)]
+            # Whatever is in the user's mpv shaders folder. Nothing is shipped:
+            # people who use mpv already curate this, and Anime4K in particular
+            # is a large collection with its own licence.
+            found = list_shaders()
+            if not found:
+                items.append((None, "-- none found in %APPDATA%/mpv/shaders --", None))
+            items += [("shader", label, path) for label, path in found]
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "scaler":
+            items = [(None, "-- scaler: only acts when window != source --", None)]
+            items += [("scaler", s + ("   (default)"
+                                      if s == "ewa_lanczossharp" else ""), s)
+                      for s in SCALER_CHOICES]
             items.append(("go", "< back", "root"))
         elif self.open_menu == "up":
             items = [(None, "-- upscaler --", None),
@@ -1447,21 +1475,38 @@ class Toolbar:
                 items += [("mode", mode_label(m), m) for m in self.modes_raw]
 
         rowh, pad = 22, 6
-        wmenu = max([f.size(t)[0] for _, t, _ in items] or [200]) + 28
-        hmenu = rowh * len(items) + pad * 2
+        colw = max([f.size(t)[0] for _, t, _ in items] or [200]) + 28
         mx, my = menu_x, TOOLBAR_H
+
+        # Wrap into columns rather than running off the bottom. This list used
+        # to be truncated silently at the window edge, which with a real mpv
+        # shader folder - 39 files here - hid a third of it with nothing to say
+        # so. Columns are capped so a long list narrows the rows instead of
+        # marching off the right edge.
+        avail_h = surface.get_height() - my - 10
+        per_col = max(1, (avail_h - pad * 2) // rowh)
+        ncols = max(1, min(4, -(-len(items) // per_col)))
+        if ncols > 1:
+            colw = min(colw, (surface.get_width() - 16) // ncols)
+            per_col = -(-len(items) // ncols)      # even them out
+        wmenu = colw * ncols
+        hmenu = min(rowh * min(len(items), per_col) + pad * 2, avail_h)
         mx = max(4, min(mx, surface.get_width() - wmenu - 4))
-        hmenu = min(hmenu, surface.get_height() - my - 10)
 
         _pg.draw.rect(surface, (24, 24, 30), (mx, my, wmenu, hmenu))
         _pg.draw.rect(surface, (70, 70, 84), (mx, my, wmenu, hmenu), 1)
 
-        y = my + pad
+        col, row = 0, 0
         for kind, text, value in items:
-            if y + rowh > my + hmenu:
-                break
+            if row >= per_col:
+                col, row = col + 1, 0
+                if col >= ncols:
+                    break
+            cx = mx + col * colw           # left edge of the column being drawn
+            y = my + pad + row * rowh
+            row += 1
             if kind is None:
-                surface.blit(f.render(text, True, (130, 130, 150)), (mx + 8, y + 3))
+                surface.blit(f.render(text, True, (130, 130, 150)), (cx + 8, y + 3))
             else:
                 if kind == "device":
                     sel = value == self.device
@@ -1471,6 +1516,10 @@ class Toolbar:
                     sel = value == CAPTURE_LATENCY_MS
                 elif kind == "alat":
                     sel = value == AUDIO_LATENCY_MS
+                elif kind == "shader":
+                    sel = value == self.shader
+                elif kind == "scaler":
+                    sel = value == self.scaler
                 elif kind == "up":
                     sel = value == UPSCALE
                 elif kind == "rh":
@@ -1481,12 +1530,11 @@ class Toolbar:
                     sel = self.slots.get(value[0]) == value[1]
                 else:
                     sel = False          # 'go' rows are navigation, never selected
-                rect = _pg.Rect(mx + 2, y, wmenu - 4, rowh)
+                rect = _pg.Rect(cx + 2, y, colw - 4, rowh)
                 if sel:
                     _pg.draw.rect(surface, (48, 74, 58), rect, border_radius=3)
-                surface.blit(f.render(text, True, (235, 235, 245)), (mx + 8, y + 3))
+                surface.blit(f.render(text, True, (235, 235, 245)), (cx + 8, y + 3))
                 self._hit.append((rect, kind, value))
-            y += rowh
 
     def _draw_keymap(self, surface, f):
         """Two-column list of every Switch Pro input and the key bound to it.
@@ -1759,6 +1807,308 @@ class VlcPreview:
 
     def stop(self):
         """Fire-and-forget teardown, for exit paths where nothing waits."""
+        self.stop_async()
+
+
+# --------------------------------------------------------------------------
+# mpv backend: the same GPU-direct rendering as VLC, but with a shader hook.
+# --------------------------------------------------------------------------
+
+def mpv_exe(explicit=None):
+    """Path to an mpv binary, or None.
+
+    mpv is an external dependency exactly as VLC already is - python-vlc is
+    only a binding and needs the VLC application installed. Nothing is
+    bundled: a static mpv.exe is ~117MB, which has no business in a git
+    repository, and GitHub refuses files that size anyway."""
+    import shutil
+    if explicit:
+        return explicit if os.path.isfile(explicit) else None
+    found = shutil.which("mpv")
+    if found:
+        return found
+    for p in (os.path.expandvars(r"%LOCALAPPDATA%\mpv\mpv.exe"),
+              os.path.expandvars(r"%APPDATA%\mpv\mpv.exe"),
+              r"C:\Program Files\mpv\mpv.exe"):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def mpv_shader_dir():
+    """Where mpv keeps user shaders, if that directory exists.
+
+    Read rather than shipped: anyone using mpv seriously already has a shader
+    collection here, and Anime4K in particular is the thing worth pointing at
+    a capture card - it was built to restore detail in material that was
+    rendered small and scaled up, which is exactly what a console does when
+    the game's internal resolution is below its output."""
+    for p in (os.path.expandvars(r"%APPDATA%\mpv\shaders"),
+              os.path.expandvars(r"%LOCALAPPDATA%\mpv\shaders")):
+        if os.path.isdir(p):
+            return p
+    return None
+
+
+def resolve_shader(name):
+    """Turn --shader into a path: a real path wins, else a name match.
+
+    Matched loosely on purpose - the Anime4K filenames are long and exact
+    ('Anime4K_Restore_CNN_M'), and nobody wants to type one correctly."""
+    if not name:
+        return None
+    if os.path.isfile(name):
+        return os.path.abspath(name)
+    want = name.lower().replace(" ", "_")
+    shaders = list_shaders()
+    for label, path in shaders:
+        if label.lower() == want:
+            return path
+    for label, path in shaders:
+        if want in label.lower():
+            return path
+    return None
+
+
+def list_shaders():
+    """(label, absolute path) for every .glsl in the user's mpv shader dir."""
+    d = mpv_shader_dir()
+    if not d:
+        return []
+    try:
+        names = sorted(n for n in os.listdir(d) if n.lower().endswith(".glsl"))
+    except OSError:
+        return []
+    return [(n[:-5], os.path.join(d, n)) for n in names]
+
+
+# What the scaler row offers. mpv's own names; ewa_lanczossharp is the one
+# most mpv configs settle on, and is what this machine's mpv.conf already uses.
+SCALER_CHOICES = ("bilinear", "spline36", "lanczos", "ewa_lanczos",
+                  "ewa_lanczossharp")
+
+
+class MpvPreview:
+    """Capture card rendered by mpv into the pygame window.
+
+    Same shape as VlcPreview and the same core trick - hand a native window
+    handle to a player that decodes and draws on the GPU, so no video data
+    ever crosses into Python. The reason to have both is that mpv exposes a
+    programmable shader stage and VLC does not: mpv can run Anime4K, FSR or
+    any other GLSL shader on the frame between decode and display, which is
+    the only way to attack aliasing that was baked into the signal before the
+    capture card ever saw it.
+
+    Driven as a subprocess over its JSON IPC pipe rather than through libmpv,
+    because libmpv means shipping a ~100MB DLL and this needs neither a
+    binding nor a build step - just mpv on the machine.
+
+    Every IPC call is bounded and off the hot path: the input loop asks
+    is_playing(), which only checks whether the process is alive, and the
+    blocking request/response is used solely for toolbar clicks."""
+
+    _seq = 0        # unique pipe name per player, so restarts never collide
+
+    def __init__(self, hwnd, video_dev, audio_dev=None, mode=None,
+                 record_path=None, exe=None, shader=None, scaler=None):
+        self.error = None
+        self._proc = None
+        self._ipc = None
+        self._lock = threading.Lock()
+        self._rid = 0
+        self.source_size = (mode[0], mode[1]) if mode and mode[1] else None
+        self.record_path = record_path
+        self.shader = shader
+        self.scaler = scaler
+
+        exe = mpv_exe(exe)
+        if not exe:
+            self.error = ("mpv not found - install it and put mpv.exe on PATH "
+                          "(or pass --mpv-path)")
+            return
+
+        MpvPreview._seq += 1
+        self._name = f"ounce-mpv-{os.getpid()}-{MpvPreview._seq}"
+        self._pipe = r"\\.\pipe" "\\" + self._name
+
+        # dshow through libavdevice. Size and rate must be requested or
+        # DirectShow hands over its first advertised format, which on this
+        # card is 640x480 - the same trap the VLC path documents.
+        src = f"av://dshow:video={video_dev}"
+        if audio_dev:
+            src += f":audio={audio_dev}"
+        lavf = ["fflags=nobuffer", "rtbufsize=256M"]
+        if mode:
+            w, h, fps, pixfmt = mode
+            lavf += [f"video_size={w}x{h}", f"framerate={fps}"]
+            # Only force a fourcc to select MJPEG, for the same reason as the
+            # VLC path: raw modes negotiate fine on size+rate, and naming a
+            # pixel format there stops the stream from ever starting.
+            if pixfmt.lower() in ("mjpeg", "mjpg"):
+                lavf.append("vcodec=mjpeg")
+
+        args = [exe, f"--wid={hwnd}", f"--input-ipc-server={self._name}",
+                # The user's own mpv.conf is deliberately not inherited. A
+                # config tuned for watching video is the wrong one for playing
+                # a game through: interpolation and display-resample both add
+                # frames of latency, and this machine's mpv.conf sets each.
+                # Shaders are still reachable - they are passed by full path.
+                "--no-config",
+                "--profile=low-latency",
+                "--cache=no",
+                "--demuxer-lavf-o=" + ",".join(lavf),
+                "--no-osc", "--no-osd-bar", "--osd-level=0",
+                "--no-input-default-bindings", "--input-vo-keyboard=no",
+                "--no-border", "--keepaspect=yes",
+                "--msg-level=all=error",
+                "--idle=no", "--force-window=yes"]
+        if not audio_dev:
+            args.append("--audio=no")
+        if scaler:
+            args.append(f"--scale={scaler}")
+        if shader:
+            args.append(f"--glsl-shaders={shader}")
+        if record_path:
+            # mpv records the stream as it arrives, no transcode, the same
+            # intent as VLC's duplicate{} - but built in rather than bolted on,
+            # and switchable later through the same property.
+            args.append(f"--stream-record={record_path}")
+        args.append(src)
+
+        try:
+            self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL,
+                                          creationflags=_NO_WINDOW)
+        except Exception as e:
+            self.error = f"could not start mpv ({e})"
+            return
+        # Connecting waits on a pipe that only appears once mpv is up, so it
+        # happens off-thread: the caller is the thread pumping window
+        # messages, and mpv needs that pump to finish embedding itself.
+        threading.Thread(target=self._connect, daemon=True).start()
+
+    def _connect(self, timeout=10.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            if self._proc is None or self._proc.poll() is not None:
+                return
+            try:
+                f = open(self._pipe, "r+b", buffering=0)
+            except OSError:
+                time.sleep(0.1)
+                continue
+            with self._lock:
+                self._ipc = f
+            return
+
+    def _command(self, *cmd, timeout=1.0):
+        """One bounded request/response. None if mpv is not answering.
+
+        Bounded on purpose: a player that has wedged must not be able to hang
+        the client, and nothing here is worth waiting on."""
+        import json
+        with self._lock:
+            f = self._ipc
+            if f is None:
+                return None
+            self._rid += 1
+            rid = self._rid
+            try:
+                f.write((json.dumps({"command": list(cmd),
+                                     "request_id": rid}) + "\n").encode())
+            except OSError:
+                self._ipc = None
+                return None
+            end, buf = time.time() + timeout, b""
+            while time.time() < end:
+                try:
+                    c = f.read(1)
+                except OSError:
+                    self._ipc = None
+                    return None
+                if not c:
+                    return None
+                buf += c
+                if buf.endswith(b"\n"):
+                    try:
+                        d = json.loads(buf.decode(errors="replace"))
+                    except ValueError:
+                        d = None
+                    buf = b""
+                    # mpv interleaves async events with replies, so match the
+                    # request id rather than taking the next line that arrives.
+                    if d and d.get("request_id") == rid:
+                        return d
+            return None
+
+    def set_shader(self, path):
+        """Load one GLSL shader, or clear them all when path is falsy."""
+        self.shader = path or None
+        r = self._command("set_property", "glsl-shaders", path or "")
+        return bool(r and r.get("error") == "success")
+
+    def set_scaler(self, name):
+        self.scaler = name
+        r = self._command("set_property", "scale", name)
+        return bool(r and r.get("error") == "success")
+
+    def set_recording(self, path):
+        """Start or stop writing the stream. mpv toggles this live, so unlike
+        the VLC path it needs no restart and cannot truncate what it wrote."""
+        self.record_path = path or None
+        r = self._command("set_property", "stream-record", path or "")
+        return bool(r and r.get("error") == "success")
+
+    def fit(self, window_size=None):
+        """Nothing to do: embedded in a window, mpv tracks its parent's size
+        on its own, and --keepaspect leaves the letterboxing correct on any
+        window shape including fullscreen."""
+        return
+
+    def is_playing(self):
+        # Process liveness only. This is called from the input loop, so it must
+        # never do IPC - a bounded wait is still a wait, 500 times a second.
+        return bool(self._proc and self._proc.poll() is None)
+
+    def stop_async(self):
+        """Begin teardown; returns an Event set when it is finished.
+
+        Off-thread for the same reason as the VLC path: the caller owns the
+        window message pump, and a player embedded in that window needs the
+        pump to run in order to shut its video output down."""
+        done = threading.Event()
+        proc, self._proc = self._proc, None
+        with self._lock:
+            ipc, self._ipc = self._ipc, None
+
+        def _teardown():
+            try:
+                if ipc:
+                    try:
+                        ipc.write(b'{"command":["quit"]}\n')
+                    except OSError:
+                        pass
+                    try:
+                        ipc.close()
+                    except OSError:
+                        pass
+                if proc:
+                    try:
+                        proc.wait(timeout=3)
+                    except Exception:
+                        proc.kill()
+            except Exception:
+                pass
+            finally:
+                done.set()
+
+        if proc is None:
+            done.set()
+        else:
+            threading.Thread(target=_teardown, daemon=True).start()
+        return done
+
+    def stop(self):
         self.stop_async()
 
 
@@ -2627,10 +2977,14 @@ def main():
                         help="(default) Show the capture card in the window.")
     parser.add_argument("--no-capture", action="store_true",
                         help="Alias for --no-preview.")
-    parser.add_argument("--video-backend", choices=["vlc", "ffmpeg"], default="vlc",
+    parser.add_argument("--video-backend", choices=["vlc", "mpv", "ffmpeg"],
+                        default="vlc",
                         help="How the capture card is drawn. 'vlc' renders on the GPU "
                              "straight into the window (handles 4K60, plays its own "
-                             "audio). 'ffmpeg' pipes raw frames through Python, which "
+                             "audio). 'mpv' does the same but with a programmable "
+                             "shader stage, so Anime4K and friends can run on the "
+                             "picture - needs mpv.exe on PATH. 'ffmpeg' pipes raw "
+                             "frames through Python, which "
                              "measures ~94fps at 1440p60 and ~175 at 1080p60 with "
                              "the upscaler on, so it is not the ceiling this once "
                              "said it was - but it adds a pipe hop VLC does not "
@@ -2646,6 +3000,26 @@ def main():
     parser.add_argument("--capture-fps", type=int, default=30, metavar="N",
                         help="Preview frame rate cap. Default 30; 60 doubles pipe "
                              "bandwidth, and is worth it with --upscale.")
+    parser.add_argument("--mpv-path", default=None, metavar="PATH",
+                        help="Where mpv.exe is, if it is not on PATH. Nothing is "
+                             "bundled - a static mpv.exe is ~117MB and has no place "
+                             "in a git repository.")
+    parser.add_argument("--shader", default=None, metavar="NAME|PATH",
+                        help="GLSL shader for the mpv backend: a full path, or the "
+                             "name of a .glsl in your mpv shaders folder. Anime4K's "
+                             "Restore_CNN shaders are the ones worth trying on a "
+                             "console feed - they were built to rebuild detail in "
+                             "material rendered small and scaled up, which is what a "
+                             "console does when the game's internal resolution is "
+                             "below its output. --list-shaders shows what you have.")
+    parser.add_argument("--scaler", default="ewa_lanczossharp",
+                        choices=SCALER_CHOICES,
+                        help="mpv's scaling kernel. Only does anything when the "
+                             "window is a different size from the source. Default "
+                             "ewa_lanczossharp.")
+    parser.add_argument("--list-shaders", action="store_true",
+                        help="List the GLSL shaders found in your mpv shaders "
+                             "folder, and exit.")
     parser.add_argument("--upscale", choices=UPSCALE_CHOICES, default="off",
                         help="Internal upscaler, ffmpeg backend only. 'aa' resamples "
                              "down to --render-height and back up to the window, both "
@@ -2760,6 +3134,18 @@ def main():
             set_window_size(w, h)
         except Exception:
             print(f"[-] Bad --window-size '{args.window_size}', using default")
+
+    if args.list_shaders:
+        found = mpv_exe(args.mpv_path)
+        print(f"mpv: {found or 'NOT FOUND - install it and put mpv.exe on PATH'}")
+        d = mpv_shader_dir()
+        print(f"shader folder: {d or 'none (looked in %APPDATA%/mpv/shaders)'}")
+        shaders = list_shaders()
+        if not shaders:
+            print("   no .glsl files found - drop shaders in that folder")
+        for label, _p in shaders:
+            print(f"   {label}")
+        sys.exit(0)
 
     if args.list_capture:
         vids, auds = list_dshow_devices()
@@ -2981,9 +3367,9 @@ def main():
     # Capture card preview. Only meaningful when a window exists, which is the
     # Steam case - the window has to be there for Steam Input anyway, so we may
     # as well put the game on it.
-    capture = capture_audio = vlc_preview = None
+    capture = capture_audio = player = None
     capture_args = None    # how to rebuild the ffmpeg pipe, once there is one
-    vlc_aspect = None
+    video_aspect = None
     toolbar = Toolbar()
     # Note this can only ever be the CAPTURE stream. The card's HDMI
     # passthrough is a hardware path from the card to a display and never
@@ -3007,6 +3393,61 @@ def main():
         vids, auds = list_dshow_devices()
         vname = pick_capture(args.capture, vids)
         aname = pick_capture(args.capture_audio, auds)
+
+        # mpv: the same GPU-direct rendering as VLC, plus a shader stage. This
+        # is the only backend that can attack aliasing baked into the signal,
+        # because it is the only one that lets a GLSL pass run between decode
+        # and display.
+        if vname and args.video_backend == "mpv":
+            hwnd = None
+            try:
+                hwnd = _pg.display.get_wm_info().get("window")
+            except Exception:
+                pass
+            found = mpv_exe(args.mpv_path)
+            if not found:
+                print("[!] mpv not found - install it, put mpv.exe on PATH, or "
+                      "pass --mpv-path. Falling back to VLC.")
+                args.video_backend = "vlc"
+            elif hwnd:
+                child = create_video_child(hwnd)
+                if child:
+                    hwnd = child
+                mode = pick_best_mode(list_dshow_modes(vname), args.capture_mode)
+                shader = resolve_shader(args.shader)
+                if args.shader and not shader:
+                    print(f"[!] No shader matching '{args.shader}' "
+                          f"(--list-shaders to see what is there)")
+                print(f"[+] Capture (mpv, GPU): {vname}")
+                print(f"    mpv: {found}")
+                if mode:
+                    print(f"    mode: {mode[0]}x{mode[1]} @{mode[2]}fps {mode[3]}"
+                          f"   (--list-modes for alternatives)")
+                print(f"    scaler: {args.scaler}"
+                      + ("   (only applies when window size != source)"
+                         if mode and mode[:2] == (WINDOW_W, WINDOW_H) else ""))
+                print(f"    shader: {os.path.basename(shader) if shader else 'none'}"
+                      f"   (toolbar: picture -> Shader)")
+                player = MpvPreview(hwnd, vname,
+                                    None if split_audio else aname, mode,
+                                    exe=found, shader=shader,
+                                    scaler=args.scaler)
+                if player.error:
+                    print(f"[!] mpv backend failed: {player.error}")
+                    player.stop()
+                    player = None
+                    args.video_backend = "vlc"
+                else:
+                    toolbar.set_sources(vids, list_dshow_modes(vname), vname, mode)
+                    toolbar.mpv_preview = True
+                    if mode:
+                        video_aspect = mode[0] / mode[1]
+                        snap_window_to_aspect(video_aspect,
+                                              (WINDOW_W, WINDOW_H + TOOLBAR_H))
+                    print("    F11 = borderless fullscreen, Esc = leave it")
+                    vname = None      # handled; skip the branches below
+                    if not split_audio:
+                        aname = None
 
         # Preferred path: VLC draws on the GPU into this very window. Nothing
         # about the video crosses into Python, so 4K60 is limited by the GPU
@@ -3040,26 +3481,26 @@ def main():
                           f"({CAPTURE_LATENCY_MS}ms buffer; raise "
                           f"--capture-latency if it crackles, or --split-audio "
                           f"to take it out of VLC)")
-                vlc_preview = VlcPreview(hwnd, vname,
+                player = VlcPreview(hwnd, vname,
                                          None if split_audio else aname, mode)
-                if vlc_preview.error:
-                    print(f"[!] VLC backend failed: {vlc_preview.error}")
+                if player.error:
+                    print(f"[!] VLC backend failed: {player.error}")
                     print("    Falling back to the ffmpeg pipe (lower resolution).")
-                    vlc_preview = None
+                    player = None
                 else:
                     # Keep the window at the source's aspect so the capture
                     # fills it exactly - no letterbox bars, no stretching.
                     toolbar.set_sources(vids, list_dshow_modes(vname), vname, mode)
                     if mode and mode[0] and mode[1]:
-                        vlc_aspect = mode[0] / mode[1]
+                        video_aspect = mode[0] / mode[1]
                         if args.fullscreen:
                             toggle_borderless_fullscreen(True)
                         # Size the window so the video AREA is the source
                         # aspect, with the toolbar strip added on top of that.
-                        snap_window_to_aspect(vlc_aspect,
+                        snap_window_to_aspect(video_aspect,
                                               0 if is_fullscreen() else TOOLBAR_H)
                         layout_video_child(show_toolbar=not is_fullscreen())
-                        vlc_preview.fit(video_child_size(not is_fullscreen()))
+                        player.fit(video_child_size(not is_fullscreen()))
                         print("    F11 = borderless fullscreen, Esc = leave it")
                         print("    toolbar: pick input device and capture mode")
                     vname = None      # handled; skip the ffmpeg path below
@@ -3151,28 +3592,28 @@ def main():
         # up and briefly shows bars. Keep re-applying it for a short
         # while so the transition stays clean.
         nonlocal refit_until
-        snap_window_to_aspect(vlc_aspect,
+        snap_window_to_aspect(video_aspect,
                               0 if is_fullscreen() else TOOLBAR_H)
         layout_video_child(show_toolbar=not is_fullscreen())
-        if vlc_preview:
-            vlc_preview.fit(video_child_size(not is_fullscreen()))
+        if player:
+            player.fit(video_child_size(not is_fullscreen()))
         refit_until = time.monotonic() + 0.6
 
-    def _swap_vlc(make_player):
+    def _swap_player(make_player):
         """Replace the VLC player, pumping messages during teardown.
 
         The pump is load-bearing: stop() cannot finish unless the
         window's message loop keeps running (see stop_async)."""
-        nonlocal vlc_preview
-        if vlc_preview is not None:
-            done = vlc_preview.stop_async()
+        nonlocal player
+        if player is not None:
+            done = player.stop_async()
             deadline = time.monotonic() + 4.0
             while not done.is_set() and time.monotonic() < deadline:
                 pump_window(vlc_active=True)
                 time.sleep(0.01)
-        vlc_preview = make_player()
-        if vlc_preview.error:
-            print(f"[!] {vlc_preview.error}")
+        player = make_player()
+        if player.error:
+            print(f"[!] {player.error}")
         _refit()
 
     def _set_slot(slot, entries):
@@ -3202,15 +3643,15 @@ def main():
         # One declaration for the whole handler: Python wants nonlocal before
         # any use of the name, and both the audio-buffer and record branches
         # rebuild capture_audio.
-        nonlocal vlc_preview, vlc_aspect, refit_until, recorder, capture_audio
+        nonlocal player, video_aspect, refit_until, recorder, capture_audio
         nonlocal capture, capture_args
         # Fullscreen hides the toolbar, so a click there is never aimed at it.
-        # This used to bail on the ffmpeg backend too (vlc_preview is None),
+        # This used to bail on the ffmpeg backend too (player is None),
         # which made the whole menu inert exactly where the upscaler lives; the
         # VLC-only handlers below check for their player instead.
         if is_fullscreen():
             return
-        if vlc_preview is None and not toolbar.software_preview:
+        if player is None and not toolbar.software_preview:
             return
         # Re-enumerate on every toolbar click, so a controller connected after
         # the client started still shows up. SDL does notice the device (the
@@ -3231,10 +3672,42 @@ def main():
             return
 
         if kind == "record":
-            if vlc_preview is None:
+            if isinstance(player, MpvPreview):
+                # mpv toggles stream-record on a live player, so unlike the VLC
+                # path this needs no restart - which also means it cannot
+                # truncate the take, and audio is whatever mpv is already
+                # playing rather than something handed back for the duration.
+                if value:
+                    if toolbar.mode and toolbar.mode[3].lower() not in ("mjpeg",
+                                                                        "mjpg"):
+                        w, h, fps, pixfmt = toolbar.mode
+                        print(f"[!] {pixfmt} is uncompressed - recording at "
+                              f"roughly {w * h * 1.5 * fps / 1e6:.0f} MB/s.")
+                    d = new_recording_dir()
+                    # Matroska, not AVI: mpv writes the stream in whatever codec
+                    # it arrives in, and mkv carries raw and MJPEG alike without
+                    # the size limits AVI brings.
+                    if player.set_recording(os.path.join(d, "capture.mkv")):
+                        recorder = InputRecorder(d)
+                        toolbar.recording = True
+                        print(f"[+] Recording to {d}")
+                    else:
+                        print("[-] mpv refused to start recording.")
+                else:
+                    player.set_recording(None)
+                    toolbar.recording = False
+                    if recorder is not None:
+                        rows, length = recorder.rows, recorder.elapsed()
+                        recorder.close()
+                        where = finish_recording_dir(recorder.dir, length)
+                        recorder = None
+                        print(f"[+] Recording saved: {where}  "
+                              f"({rows} input rows)")
+                return
+            if player is None:
                 # VLC's sout is what writes the file; the ffmpeg preview pipe
                 # has no recorder behind it.
-                print("[-] Recording needs the VLC backend.")
+                print("[-] Recording needs the VLC or mpv backend.")
                 return
             aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
             # VLC is what writes capture.avi, so it needs the audio device back
@@ -3258,10 +3731,10 @@ def main():
                 d = new_recording_dir()
                 recorder = InputRecorder(d)
                 toolbar.recording = True
-                _swap_vlc(lambda: VlcPreview(
+                _swap_player(lambda: VlcPreview(
                     _video_child, toolbar.device, aud, toolbar.mode,
                     record_path=os.path.join(d, "capture.avi")))
-                if vlc_preview.error:
+                if player.error:
                     toolbar.recording = False
                     recorder.close(); recorder = None
                     print("[-] Recording failed to start.")
@@ -3272,7 +3745,7 @@ def main():
                 # Tear the recording pipeline down first: the file is only
                 # finalised when VLC closes it, so the log must not be cut
                 # short before the video it is timed against.
-                _swap_vlc(lambda: VlcPreview(
+                _swap_player(lambda: VlcPreview(
                     _video_child, toolbar.device,
                     None if split_audio else aud, toolbar.mode))
                 if split_audio and aud:
@@ -3305,6 +3778,26 @@ def main():
             print(f"[+] Audio buffer -> {AUDIO_LATENCY_MS}ms")
             return
 
+        if kind in ("shader", "scaler"):
+            # The one settings pair that needs no restart at all: mpv swaps
+            # shaders and scalers on a live stream, so this is safe mid-take
+            # and costs nothing but a frame.
+            if not isinstance(player, MpvPreview):
+                print("[-] Shaders need the mpv backend (--video-backend mpv).")
+                return
+            if kind == "shader":
+                ok = player.set_shader(value)
+                toolbar.shader = value if ok else toolbar.shader
+                name = os.path.basename(value)[:-5] if value else "none"
+                print(f"[+] Shader -> {name}" if ok
+                      else f"[!] mpv refused shader {name}")
+            else:
+                ok = player.set_scaler(value)
+                toolbar.scaler = value if ok else toolbar.scaler
+                print(f"[+] Scaler -> {value}" if ok
+                      else f"[!] mpv refused scaler {value}")
+            return
+
         if kind in ("up", "rh", "sharp"):
             # ffmpeg builds its filter graph once, when it starts, so every one
             # of these is applied by restarting the pipe rather than by poking
@@ -3335,7 +3828,7 @@ def main():
             return
 
         if kind == "vlat":
-            if vlc_preview is None:
+            if player is None:
                 print("[-] The video buffer is a VLC setting; this is the "
                       "ffmpeg backend.")
                 return
@@ -3346,7 +3839,7 @@ def main():
             # live-caching is fixed when the media is created, so this needs the
             # same stream restart a device or mode change needs.
             aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
-            _swap_vlc(lambda: VlcPreview(_video_child, toolbar.device,
+            _swap_player(lambda: VlcPreview(_video_child, toolbar.device,
                                          None if split_audio else aud,
                                          toolbar.mode))
             print(f"[+] Video buffer -> {CAPTURE_LATENCY_MS}ms")
@@ -3397,7 +3890,7 @@ def main():
 
         print(f"[+] Switching {kind} -> "
               f"{value if kind == 'device' else mode_label(value)}")
-        if vlc_preview is None:
+        if player is None:
             # ffmpeg backend: the same change, applied by restarting the pipe.
             # DirectShow negotiates device and mode when the stream opens on
             # either backend, so neither can be changed on a live one.
@@ -3420,16 +3913,28 @@ def main():
             return
         aud = pick_capture(args.capture_audio, list_dshow_devices()[1])
         # Under --split-audio the separate pipe is already playing this card's
-        # sound and keeps running across a device or mode change, so VLC must
-        # not also open it.
-        _swap_vlc(lambda: VlcPreview(_video_child, new_dev,
-                                     None if split_audio else aud, new_mode))
+        # sound and keeps running across a device or mode change, so the player
+        # must not also open it.
+        if isinstance(player, MpvPreview):
+            # Rebuilt rather than retuned, for the same reason as VLC: the
+            # device and mode are negotiated when the stream opens. The shader
+            # and scaler are carried across so a mode change does not silently
+            # drop them.
+            keep_shader, keep_scaler = toolbar.shader, toolbar.scaler
+            _swap_player(lambda: MpvPreview(
+                _video_child, new_dev, None if split_audio else aud, new_mode,
+                exe=mpv_exe(args.mpv_path), shader=keep_shader,
+                scaler=keep_scaler))
+        else:
+            _swap_player(lambda: VlcPreview(_video_child, new_dev,
+                                            None if split_audio else aud,
+                                            new_mode))
         toolbar.set_sources(toolbar.devices,
                             new_modes if new_modes is not None
                             else (toolbar.modes_comp + toolbar.modes_raw),
                             new_dev, new_mode)
         if new_mode:
-            vlc_aspect = new_mode[0] / new_mode[1]
+            video_aspect = new_mode[0] / new_mode[1]
         _refit()
 
     def _on_key(key):
@@ -3482,7 +3987,7 @@ def main():
                 time.sleep(0.005)
                 if _window is not None and (time.monotonic() - last_paint) >= 0.033:
                     last_paint = time.monotonic()
-                    if not pump_window(vlc_active=(vlc_preview is not None),
+                    if not pump_window(vlc_active=(player is not None),
                                        on_click=_on_click,
                                        on_key=_on_key):
                         break
@@ -3535,17 +4040,17 @@ def main():
             # expensive than building a packet and must never pace it.
             if _window is not None and (time.monotonic() - last_paint) >= 0.033:
                 last_paint = time.monotonic()
-                if not pump_window(vlc_active=(vlc_preview is not None),
-                                   on_resize=(_refit if vlc_preview else None),
+                if not pump_window(vlc_active=(player is not None),
+                                   on_resize=(_refit if player else None),
                                    on_click=_on_click, on_key=_on_key):
                     print("\n[+] Window closed - exiting.")
                     break
-                if vlc_preview is not None:
+                if player is not None:
                     # VLC owns the child window's pixels, but the toolbar strip
                     # above it is still ours. Hidden in fullscreen, where the
                     # video child covers the whole window.
                     if time.monotonic() < refit_until:
-                        vlc_preview.fit(video_child_size(not is_fullscreen()))
+                        player.fit(video_child_size(not is_fullscreen()))
                     if not is_fullscreen():
                         menu_open = toolbar.open_menu is not None
                         if menu_open != menu_was_open:
@@ -3610,7 +4115,7 @@ def main():
         # Stop the players before finalising, so VLC has closed the video file
         # by the time the folder is renamed. Quitting mid-recording still
         # leaves a complete, correctly named take rather than a stray folder.
-        for obj in (capture, capture_audio, vlc_preview):
+        for obj in (capture, capture_audio, player):
             if obj is not None:
                 obj.stop()
         if recorder is not None:
