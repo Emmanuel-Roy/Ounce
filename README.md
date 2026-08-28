@@ -298,7 +298,36 @@ OunceClient.exe --list-shaders          # what's in your mpv shaders folder
 | `--video-backend mpv` | GPU rendering with a shader stage |
 | `--shader NAME\|PATH` | A `.glsl` by full path, or by name — matched loosely, so `restore_cnn_m` finds `Anime4K_Restore_CNN_M` |
 | `--scaler NAME` | mpv's kernel, default `ewa_lanczossharp`. Only acts when the window is a different size from the source |
+| `--dscale NAME` | Supersampling kernel — see below. Default `mitchell` |
 | `--mpv-path PATH` | Where `mpv.exe` is, if not on PATH |
+
+### Supersampling
+
+Shrinking a 1440p feed into a smaller window **is** supersampling, and mpv does
+it correctly with no flags at all: `correct-downscaling` (enough taps to average
+the detail away instead of point-sampling it into aliasing) and
+`linear-downscaling` (average in linear light, so edges don't darken) are both
+on by default — verified by asking a running player, not by reading the docs.
+
+So on this backend supersampling is already on. What's left to choose is the
+kernel, `--dscale`: `mitchell` (default here — softer, loses stairsteps) or
+`hermite` (mpv's own default — sharper, keeps them). It's on the toolbar as
+**Supersample**, and it applies live.
+
+**It only works while the window is smaller than the source.** At 1:1 there is
+nothing to average and the kernel sits idle no matter what it's set to. The
+toolbar row says which of the two you're in rather than just naming the kernel:
+
+```
+Supersample :  mitchell   (active, 2560 -> 960 across, 2.67x)
+Supersample :  mitchell   (idle: 1:1 at 2560 - nothing to supersample)
+```
+
+That means a 1440p feed shown fullscreen on a 1440p display gets no
+supersampling — there are exactly as many source pixels as screen pixels. To get
+it there, the source has to carry more pixels than the display: capture at 4K and
+show at 1440p, if the console will output 4K. Otherwise supersampling is a
+windowed-play benefit, which is why shrinking the window looks better.
 
 Shader and scaler are on the toolbar under **picture** and apply **live** — mpv
 swaps them on a running stream, so unlike every other setting here nothing

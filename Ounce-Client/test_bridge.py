@@ -1249,11 +1249,26 @@ class Toolbar:
         self.mpv_preview = False
         self.shader = None            # currently loaded shader path, or None
         self.scaler = "ewa_lanczossharp"
+        self.dscale = "mitchell"
+        self.supersampling = None     # (active, why) from the player, or None
         self.open_menu = None        # None|'device'|'mode'|'vlat'|'alat'|'slot0'..|'keys'
         self._hit = []               # [(rect, kind, value)] rebuilt each draw
         self.keymap = None           # live dict of action -> key name
         self.capture_action = None   # action awaiting a keypress, if any
         self.recording = False       # drives the record button's appearance
+
+    def dscale_label(self):
+        """The supersample row, which reports whether it is doing anything.
+
+        Selecting a kernel is not the same as that kernel having work to do:
+        supersampling only happens while the window is smaller than the source,
+        and at 1:1 the setting is real but idle. A row showing only the kernel
+        name would imply otherwise, so the state goes in the label."""
+        active, why = (self.supersampling or (None, None))
+        if active is None:
+            return f"Supersample :  {self.dscale}"
+        return "Supersample :  %s   (%s)" % (
+            self.dscale, f"active, {why}" if active else f"idle: {why}")
 
     def set_sources(self, devices, modes, device, mode):
         self.devices = devices
@@ -1374,6 +1389,7 @@ class Toolbar:
                               (os.path.basename(self.shader)[:-5] if self.shader
                                else "none"), "shader"))
                 items.append(("go", f"Scaler :  {self.scaler}", "scaler"))
+                items.append(("go", self.dscale_label(), "dscale"))
             if self.software_preview:
                 items.append((None, "-- picture --", None))
                 items.append(("go", f"Upscaler :  {UPSCALE}", "up"))
@@ -1414,6 +1430,20 @@ class Toolbar:
             if not found:
                 items.append((None, "-- none found in %APPDATA%/mpv/shaders --", None))
             items += [("shader", label, path) for label, path in found]
+            items.append(("go", "< back", "root"))
+        elif self.open_menu == "dscale":
+            items = [(None, "-- supersampling: kernel that shrinks the picture --",
+                      None)]
+            items += [("dscale", s + ("   (default)" if s == "mitchell" else
+                                      "   (mpv default, sharper)" if s == "hermite"
+                                      else ""), s)
+                      for s in DSCALE_CHOICES]
+            active, why = (self.supersampling or (None, None))
+            if active is not None:
+                items.append((None, "-- %s --" % why, None))
+                if not active:
+                    items.append((None, "-- shrink the window to make it work --",
+                                  None))
             items.append(("go", "< back", "root"))
         elif self.open_menu == "scaler":
             items = [(None, "-- scaler: only acts when window != source --", None)]
@@ -1520,6 +1550,8 @@ class Toolbar:
                     sel = value == self.shader
                 elif kind == "scaler":
                     sel = value == self.scaler
+                elif kind == "dscale":
+                    sel = value == self.dscale
                 elif kind == "up":
                     sel = value == UPSCALE
                 elif kind == "rh":
@@ -1887,6 +1919,22 @@ def list_shaders():
 SCALER_CHOICES = ("bilinear", "spline36", "lanczos", "ewa_lanczos",
                   "ewa_lanczossharp")
 
+# The downscale kernel - and on this setup that is the one that matters.
+#
+# Shrinking a 1440p feed into a smaller window IS supersampling, and mpv does
+# it correctly out of the box: correct-downscaling (enough taps to actually
+# average the detail away, rather than point-sampling it into aliasing) and
+# linear-downscaling (average in linear light, so edges do not darken) are both
+# on by default, verified by asking a running player rather than trusting the
+# documentation. What is left to choose is the kernel.
+#
+# mpv's own default is hermite, which is cheap and sharp. mitchell is softer and
+# averages more, which is what you want when the aim is to lose the stairsteps
+# rather than to keep every pixel crisp - so that is the default here, with
+# hermite one click away for anyone who disagrees.
+DSCALE_CHOICES = ("hermite", "mitchell", "catmull_rom", "spline36", "lanczos",
+                  "ewa_lanczossharp")
+
 
 class MpvPreview:
     """Capture card rendered by mpv into the pygame window.
@@ -1910,7 +1958,8 @@ class MpvPreview:
     _seq = 0        # unique pipe name per player, so restarts never collide
 
     def __init__(self, hwnd, video_dev, audio_dev=None, mode=None,
-                 record_path=None, exe=None, shader=None, scaler=None):
+                 record_path=None, exe=None, shader=None, scaler=None,
+                 dscale=None):
         self.error = None
         self._proc = None
         self._ipc = None
@@ -1920,6 +1969,7 @@ class MpvPreview:
         self.record_path = record_path
         self.shader = shader
         self.scaler = scaler
+        self.dscale = dscale
 
         exe = mpv_exe(exe)
         if not exe:
@@ -1966,6 +2016,11 @@ class MpvPreview:
             args.append("--audio=no")
         if scaler:
             args.append(f"--scale={scaler}")
+        if dscale:
+            # Stated rather than left to the default, and stated alongside the
+            # two flags that make it supersampling rather than point sampling.
+            args += [f"--dscale={dscale}",
+                     "--correct-downscaling=yes", "--linear-downscaling=yes"]
         if shader:
             args.append(f"--glsl-shaders={shader}")
         if record_path:
@@ -2051,6 +2106,34 @@ class MpvPreview:
         self.scaler = name
         r = self._command("set_property", "scale", name)
         return bool(r and r.get("error") == "success")
+
+    def set_dscale(self, name):
+        """The supersampling kernel: what averages the picture down into a
+        window smaller than the source."""
+        self.dscale = name
+        r = self._command("set_property", "dscale", name)
+        return bool(r and r.get("error") == "success")
+
+    def supersampling(self, out_size):
+        """(active, why) - is the picture actually being supersampled?
+
+        Only true when the window has fewer pixels than the source. At 1:1
+        there is nothing to average, so the honest answer is no, and saying so
+        is better than implying a setting is doing work it cannot do.
+
+        The output size is passed in rather than read back from mpv: embedded
+        in a foreign window, osd-dimensions reports 100 whatever the window
+        really is, and the client already knows the size it made the video
+        child - measured, not guessed at over IPC."""
+        out_w = out_size[0] if out_size else None
+        src_w = self.source_size[0] if self.source_size else None
+        if not out_w or not src_w:
+            return None, "unknown"
+        if out_w < src_w:
+            return True, f"{src_w} -> {out_w} across, {src_w / out_w:.2f}x"
+        if out_w == src_w:
+            return False, f"1:1 at {src_w} - nothing to supersample"
+        return False, f"{src_w} -> {out_w} across: upscaling, not supersampling"
 
     def set_recording(self, path):
         """Start or stop writing the stream. mpv toggles this live, so unlike
@@ -3017,6 +3100,14 @@ def main():
                         help="mpv's scaling kernel. Only does anything when the "
                              "window is a different size from the source. Default "
                              "ewa_lanczossharp.")
+    parser.add_argument("--dscale", default="mitchell", choices=DSCALE_CHOICES,
+                        help="Downscale kernel for the mpv backend - the "
+                             "supersampling knob. Shrinking the 1440p feed into a "
+                             "smaller window IS supersampling, and this is what "
+                             "does the averaging. Default mitchell (softer, loses "
+                             "stairsteps); mpv's own default hermite is sharper. "
+                             "Does nothing at 1:1, where there is nothing to "
+                             "average.")
     parser.add_argument("--list-shaders", action="store_true",
                         help="List the GLSL shaders found in your mpv shaders "
                              "folder, and exit.")
@@ -3431,7 +3522,7 @@ def main():
                 player = MpvPreview(hwnd, vname,
                                     None if split_audio else aname, mode,
                                     exe=found, shader=shader,
-                                    scaler=args.scaler)
+                                    scaler=args.scaler, dscale=args.dscale)
                 if player.error:
                     print(f"[!] mpv backend failed: {player.error}")
                     player.stop()
@@ -3440,6 +3531,14 @@ def main():
                 else:
                     toolbar.set_sources(vids, list_dshow_modes(vname), vname, mode)
                     toolbar.mpv_preview = True
+                    toolbar.shader = shader
+                    toolbar.scaler = args.scaler
+                    toolbar.dscale = args.dscale
+                    print(f"    supersampling: {args.dscale} kernel, "
+                          f"gamma-correct - active whenever the window is "
+                          f"smaller than {mode[0]}x{mode[1]}"
+                          if mode else
+                          f"    supersampling: {args.dscale} kernel")
                     if mode:
                         video_aspect = mode[0] / mode[1]
                         snap_window_to_aspect(video_aspect,
@@ -3660,6 +3759,12 @@ def main():
         # plugged in later, appeared to be unsupported when it was simply not
         # being looked for again.
         toolbar.set_inputs(list_real_pads(), *_slot_state())
+        # Ask the player whether it is actually supersampling before drawing the
+        # menu that reports it. One bounded IPC call per click, so the answer
+        # tracks the window size instead of whatever was true at startup.
+        if isinstance(player, MpvPreview):
+            toolbar.supersampling = player.supersampling(
+                video_child_size(not is_fullscreen()))
         picked = toolbar.click(pos)
         if not picked:
             return
@@ -3776,6 +3881,24 @@ def main():
                     print(f"[!] Capture audio failed: {capture_audio.error}")
                     capture_audio = None
             print(f"[+] Audio buffer -> {AUDIO_LATENCY_MS}ms")
+            return
+
+        if kind == "dscale":
+            if not isinstance(player, MpvPreview):
+                print("[-] Supersampling is an mpv setting "
+                      "(--video-backend mpv). On the ffmpeg backend it is "
+                      "'Upscaler: aa' instead.")
+                return
+            if player.set_dscale(value):
+                toolbar.dscale = value
+                active, why = player.supersampling(
+                    video_child_size(not is_fullscreen()))
+                toolbar.supersampling = (active, why)
+                print(f"[+] Supersample kernel -> {value}"
+                      + (f"   (active, {why})" if active else
+                         f"   (idle: {why})" if active is False else ""))
+            else:
+                print(f"[!] mpv refused dscale {value}")
             return
 
         if kind in ("shader", "scaler"):
@@ -3920,11 +4043,11 @@ def main():
             # device and mode are negotiated when the stream opens. The shader
             # and scaler are carried across so a mode change does not silently
             # drop them.
-            keep_shader, keep_scaler = toolbar.shader, toolbar.scaler
+            keep = (toolbar.shader, toolbar.scaler, toolbar.dscale)
             _swap_player(lambda: MpvPreview(
                 _video_child, new_dev, None if split_audio else aud, new_mode,
-                exe=mpv_exe(args.mpv_path), shader=keep_shader,
-                scaler=keep_scaler))
+                exe=mpv_exe(args.mpv_path), shader=keep[0],
+                scaler=keep[1], dscale=keep[2]))
         else:
             _swap_player(lambda: VlcPreview(_video_child, new_dev,
                                             None if split_audio else aud,
